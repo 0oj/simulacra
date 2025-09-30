@@ -1,0 +1,91 @@
+---
+alwaysApply: true
+---
+
+# Cursor Rules for Simulacra
+
+These rules define **my preferences, learning requirements, and project style**.  
+Cursor should follow them whenever assisting with this repo.
+
+---
+
+## Philosophy
+
+- **Learning > speed.** Favor explicit, step-by-step implementations over hiding details behind libraries.
+- **Elegance matters.** Code should be clean, modular, and beautiful.
+- **Small steps.** Break work into tiny, bite-sized stages. Never dump full code at once. Teach and explain.
+- **Rocket context.** Always keep in mind the harsh realities of rocket software (robustness, failure modes, sensor noise).
+- **Visual-first.** Every feature should have a quick visualization/demo if possible.
+
+---
+
+## Coding Conventions
+
+- Use **Python 3.13** with `uv` for dependency management.
+- **Project layout**:  
+  - `src/simulacra/core` — reusable utilities (rk4, clamp, etc.).  
+  - `src/simulacra/steps/stepXX_*` — each step is self-contained, teaching one concept.  
+  - `tests/core/` and `tests/steps/` — pytest test files, named like `test_utils.py`, `test_integrators.py`.  
+  - `scripts/` inside each step for runnable experiments.
+
+- **Types**: use Python type hints everywhere (`float`, `np.ndarray`, `Optional[...]`).
+- **State handling**:  
+  - Keep a clean `State` class with `.as_array()` / `.from_array()`.  
+  - RK4 integrator stays generic (`np.ndarray` in/out).  
+  - Add a thin wrapper (`rk4_state_step`) to keep sim loops clean.
+
+---
+
+## Examples of Design Decisions
+
+### Clamp
+```python
+def clamp(x: Optional[T], lo: T, hi: T) -> Optional[T]:
+    if x is None:
+        return None
+    return lo if x < lo else (hi if x > hi else x)
+````
+
+* Supports `None` for convenience.
+* Explicit, minimal.
+
+### RK4
+
+```python
+def rk4_step(ode_f: ODE_Func, state_vec: StateVec, dt: TimeStep) -> StateVec:
+    k1 = ode_f(state_vec)
+    k2 = ode_f(state_vec + 0.5 * dt * k1)
+    k3 = ode_f(state_vec + 0.5 * dt * k2)
+    k4 = ode_f(state_vec + dt * k3)
+    return state_vec + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
+```
+
+* Generic, works for any ODE.
+* `State` conversions handled outside (wrapper function).
+
+### Visualisation
+
+* Each sim has **animations** (matplotlib) to show altitude vs setpoint, thrust vs time, etc.
+* Animations should be **configurable** and optionally **batch-saved**.
+* Batch mode: produce metrics CSV + plots + gifs.
+
+---
+
+## Learning Requirements
+
+* Every new concept should be introduced with a **slow, bite-sized explanation** before code.
+* Explanations should cover **concept → code → test → visualization**.
+* Examples must be runnable immediately.
+* Edge cases and failure modes should be considered at each step.
+* Show metrics (rise time, overshoot, steady-state error, etc.) for control validation.
+* Prefer small experiments and demos over large jumps.
+
+---
+
+## Next Steps to Keep in Mind
+
+1. Step 01 (vertical hop, PID, IMU noise, visualization).
+2. Step 02 (attitude control: 2D tilt, simple torque model).
+3. Step 03 (3D + quaternions).
+4. Step 04 (sensor fusion: accelerometer + gyro).
+5. Step 05 (full guidance loop).
