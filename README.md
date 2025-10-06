@@ -62,11 +62,15 @@ simulacra/
 
 ### 🚀 Vertical Hop Demo
 
-![Vertical Hop Demo](./out/vertical_hop_demo_1D_1h.gif)
+![Vertical Hop Demo](./out/vertical_hop_demo_1D_single.gif)
+![Multi-Hop Demo](./out/vertical_hop_demo_1D_multiple.gif)
 
 ```bash
 uv run python src/simulacra/steps/step01_vertical_hop/scripts/vertical_hop_demo.py \
   --z_sp 3.0 --t_final 6.0 --save-demo out/vertical_hop_demo.gif
+
+uv run python src/simulacra/steps/step01_vertical_hop/scripts/multi_hop_demo.py \
+  --sequence 3,4,2,5,1 --save-demo out/multi_hop_demo.gif
 ```
 
 ### Single Interactive Simulation
