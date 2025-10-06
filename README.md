@@ -60,14 +60,23 @@ simulacra/
 
 ## Example Run
 
-Single interactive simulation:
+### 🚀 Vertical Hop Demo
+
+![Vertical Hop Demo](./out/vertical_hop_demo_1D_1h.gif)
+
+```bash
+uv run python src/simulacra/steps/step01_vertical_hop/scripts/vertical_hop_demo.py \
+  --z_sp 3.0 --t_final 6.0 --save-demo out/vertical_hop_demo.gif
+```
+
+### Single Interactive Simulation
 
 ```bash
 uv run python src/simulacra/steps/step01_vertical_hop/scripts/pid_experiments.py \
   --controller PID --kp 2.2 --ki 1.0 --kd 0.7 --t_final 6.0
-````
+```
 
-Batch grid sweep with GIF outputs:
+### Batch Grid Sweep
 
 ```bash
 uv run python src/simulacra/steps/step01_vertical_hop/scripts/pid_experiments.py \
@@ -75,7 +84,6 @@ uv run python src/simulacra/steps/step01_vertical_hop/scripts/pid_experiments.py
   --batch-configs "[{'name':'kp2_ki0','kp':2.0,'ki':0.0,'kd':0.0,'save_anim':'out/grid/kp2_ki0.gif'}]" \
   --outdir out/grid_results
 ```
-
 
 ### Batch Results: PID Grid Sweep
 
