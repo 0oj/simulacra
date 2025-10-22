@@ -156,112 +156,148 @@ class Renderer:
         self.ax.plot([x0, x1, x1, x0, x0], [y0, y0, y1, y1, y0], "b--", linewidth=1)
 
     def _draw_wind(self, world: World) -> None:
-        """Visualize wind as thin gray line segments moving across the grid.
+        """Visualize wind as a single vector arrow in the top right corner.
 
         Override this method to customize wind visualization.
         """
-        wind = world.wind
+        wind = world.current_wind
         if wind.x == 0 and wind.y == 0:
             return
 
-        # Get world bounds
+        # Get world bounds for positioning
         x0, y0 = world.bounds[0].x, world.bounds[0].y
         x1, y1 = world.bounds[1].x, world.bounds[1].y
 
-        # Create a grid of wind lines
-        num_x = 12
-        num_y = 8
+        # Position wind indicator in top right corner
+        wind_x = x1 - 8  # 8 units from right edge
+        wind_y = y1 - 5  # 5 units from top edge
 
-        # Calculate line length based on wind magnitude
+        # Calculate wind properties
         wind_magnitude = (wind.x**2 + wind.y**2) ** 0.5
-        line_length = min(3.0, max(1.0, wind_magnitude * 2.0))
+        if wind_magnitude == 0:
+            return
 
-        # Add subtle animation offset based on time
-        time_offset = world.current_time * 50
+        # Scale wind vector for visibility (max length of 3 units)
+        scale = min(3.0, wind_magnitude * 2.0)
+        wind_norm_x = wind.x / wind_magnitude
+        wind_norm_y = wind.y / wind_magnitude
 
-        for i in range(num_x):
-            for j in range(num_y):
-                # Base position in grid
-                px = x0 + (x1 - x0) * (i + 0.5) / num_x
-                py = y0 + (y1 - y0) * (j + 0.5) / num_y
+        # Draw wind vector as arrow
+        self.ax.arrow(
+            wind_x,
+            wind_y,
+            wind_norm_x * scale,
+            wind_norm_y * scale,
+            head_width=0.8,
+            head_length=0.6,
+            fc="gray",
+            ec="darkgray",
+            alpha=0.8,
+            linewidth=2.0,
+            zorder=10,
+        )
 
-                # Add subtle movement animation
-                anim_offset = 0.3 * (i + j) * 0.1
-                px += wind.x * (time_offset + anim_offset) * 0.1
-                py += wind.y * (time_offset + anim_offset) * 0.1
-
-                # Wrap around world bounds for continuous flow
-                if px < x0:
-                    px += x1 - x0
-                elif px > x1:
-                    px -= x1 - x0
-                if py < y0:
-                    py += y1 - y0
-                elif py > y1:
-                    py -= y1 - y0
-
-                # Calculate line endpoints
-                if wind_magnitude > 0:
-                    # Normalize wind direction
-                    wind_norm_x = wind.x / wind_magnitude
-                    wind_norm_y = wind.y / wind_magnitude
-
-                    # Line endpoints
-                    start_x = px - wind_norm_x * line_length * 0.5
-                    start_y = py - wind_norm_y * line_length * 0.5
-                    end_x = px + wind_norm_x * line_length * 0.5
-                    end_y = py + wind_norm_y * line_length * 0.5
-
-                    # Draw thin gray line segment
-                    self.ax.plot(
-                        [start_x, end_x],
-                        [start_y, end_y],
-                        color="gray",
-                        linewidth=0.8,
-                        alpha=0.6,
-                        zorder=1,
-                    )
+        # # Add wind magnitude text
+        # self.ax.text(
+        #     wind_x - 2,
+        #     wind_y - 1,
+        #     f"Wind: {wind_magnitude:.1f}",
+        #     fontsize=10,
+        #     ha="center",
+        #     bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+        #     zorder=10,
+        # )
 
     def _draw_rocket(self, rocket: Rocket) -> None:
-        """Draw a simple rocket: body as a vertical rectangle, nose as a triangle.
+        """Draw a rocket oriented according to its attitude.
 
         Override this method to customize rocket rendering.
         """
         rx, ry = rocket.position.x, rocket.position.y
-        body_height = 4.0
+        body_height = rocket.length
         body_width = 0.7
 
-        # Body rectangle
-        body_x = [
-            rx - body_width / 2,
-            rx + body_width / 2,
-            rx + body_width / 2,
-            rx - body_width / 2,
-            rx - body_width / 2,
+        # Get rocket orientation vector
+        orientation_vec = rocket.orientation_vector
+
+        # Calculate rocket body corners in world coordinates
+        # Body extends along the orientation vector
+        half_height = body_height / 2
+        half_width = body_width / 2
+
+        # Perpendicular vector for width
+        perp_x = -orientation_vec.y
+        perp_y = orientation_vec.x
+
+        # Calculate body corners
+        # Bottom center (base of rocket)
+        base_x = rx - orientation_vec.x * half_height
+        base_y = ry - orientation_vec.y * half_height
+
+        # Top center (nose of rocket)
+        nose_x = rx + orientation_vec.x * half_height
+        nose_y = ry + orientation_vec.y * half_height
+
+        # Body rectangle corners
+        body_corners_x = [
+            base_x - perp_x * half_width,
+            base_x + perp_x * half_width,
+            nose_x + perp_x * half_width,
+            nose_x - perp_x * half_width,
+            base_x - perp_x * half_width,
         ]
-        body_y = [ry, ry, ry + body_height, ry + body_height, ry]
-        self.ax.fill(body_x, body_y, color="gray", zorder=2)
+        body_corners_y = [
+            base_y - perp_y * half_width,
+            base_y + perp_y * half_width,
+            nose_y + perp_y * half_width,
+            nose_y - perp_y * half_width,
+            base_y - perp_y * half_width,
+        ]
 
-        # Nose cone (triangle)
-        nose_x = [rx - body_width / 2, rx, rx + body_width / 2]
-        nose_y = [ry + body_height, ry + body_height + 1.0, ry + body_height]
-        self.ax.fill(nose_x, nose_y, color="red", zorder=3)
+        self.ax.fill(body_corners_x, body_corners_y, color="gray", zorder=2)
 
-        # Fins (optional, for realism)
+        # Nose cone (triangle pointing in direction of orientation)
+        nose_tip_x = nose_x + orientation_vec.x * 1.0
+        nose_tip_y = nose_y + orientation_vec.y * 1.0
+
+        nose_x_coords = [
+            nose_x - perp_x * half_width,
+            nose_tip_x,
+            nose_x + perp_x * half_width,
+        ]
+        nose_y_coords = [
+            nose_y - perp_y * half_width,
+            nose_tip_y,
+            nose_y + perp_y * half_width,
+        ]
+        self.ax.fill(nose_x_coords, nose_y_coords, color="red", zorder=3)
+
+        # Fins at the base of the rocket
         fin_span = 0.5
         fin_height = 0.7
-        left_fin_x = [
-            rx - body_width / 2,
-            rx - body_width / 2 - fin_span,
-            rx - body_width / 2,
-        ]
-        left_fin_y = [ry, ry - fin_height, ry + 0.5]
-        right_fin_x = [
-            rx + body_width / 2,
-            rx + body_width / 2 + fin_span,
-            rx + body_width / 2,
-        ]
-        right_fin_y = [ry, ry - fin_height, ry + 0.5]
+
+        # Left fin (perpendicular to rocket body)
+        left_fin_base_x = base_x - perp_x * half_width
+        left_fin_base_y = base_y - perp_y * half_width
+        left_fin_tip_x = left_fin_base_x - perp_x * fin_span
+        left_fin_tip_y = left_fin_base_y - perp_y * fin_span
+        left_fin_mid_x = left_fin_base_x - orientation_vec.x * fin_height
+        left_fin_mid_y = left_fin_base_y - orientation_vec.y * fin_height
+
+        left_fin_x = [left_fin_base_x, left_fin_tip_x, left_fin_mid_x]
+        left_fin_y = [left_fin_base_y, left_fin_tip_y, left_fin_mid_y]
+
+        # Right fin
+        right_fin_base_x = base_x + perp_x * half_width
+        right_fin_base_y = base_y + perp_y * half_width
+        right_fin_tip_x = right_fin_base_x + perp_x * fin_span
+        right_fin_tip_y = right_fin_base_y + perp_y * fin_span
+        right_fin_mid_x = right_fin_base_x - orientation_vec.x * fin_height
+        right_fin_mid_y = right_fin_base_y - orientation_vec.y * fin_height
+
+        right_fin_x = [right_fin_base_x, right_fin_tip_x, right_fin_mid_x]
+        right_fin_y = [right_fin_base_y, right_fin_tip_y, right_fin_mid_y]
+
         self.ax.fill(left_fin_x, left_fin_y, color="blue", zorder=2)
         self.ax.fill(right_fin_x, right_fin_y, color="blue", zorder=2)
 

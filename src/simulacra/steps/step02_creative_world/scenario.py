@@ -20,7 +20,7 @@ class Scenario:
             Self for method chaining.
         """
         self.rocket.apply(self.world.gravity)
-        self.rocket.apply(self.world.wind)
+        self.rocket.apply(self.world.current_wind)
 
         self.rocket.step(self.dt)
         self.world.step(self.dt)
