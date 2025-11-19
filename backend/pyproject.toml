@@ -2,4 +2,10 @@
 name = "backend"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "matplotlib>=3.10.7",
+    "numpy>=2.3.4",
+    "numpy-quaternion>=2024.0.12",
+    "pydantic>=2.12.3",
+    "scipy>=1.16.3",
+]
