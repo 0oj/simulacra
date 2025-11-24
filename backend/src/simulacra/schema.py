@@ -2,66 +2,291 @@
 The record of truth. God writes the simulation state to stdout,
 capturing both the true state and what the rocket perceived.
 """
+
 import json
 import sys
+from typing import Optional, Union, Literal
 
-from pydantic import BaseModel
+from .physics.vec2 import RocketVec2, WorldVec2
 
+from pydantic import BaseModel, Field
 
-class SimState(BaseModel):
-    t: float
-    pos_x: float
-    pos_y: float
-    gimbal_angle: float
-    orientation: float
-    angular_velocity: float
-    thrust_magnitude: float  # True thrust magnitude (N)
-    gps_x: float
-    gps_y: float
-    imu_orientation: float
-    imu_angular_velocity: float
-    thrust_sensor: float
-    rocket_length: float
+from enum import Enum
+
+SCHEMA_VERSION = "0.1.0"
 
 
-def write_sim_state(state: SimState) -> None:
+class MessageType(str, Enum):
+    METADATA = "metadata"
+    CONSTANT = "constant"
+    VARIABLE = "variable"
+
+
+class BaseMessage(BaseModel):
+    message_type: MessageType
+
+    model_config = {
+        "use_enum_values": True,
+    }
+
+
+# ============================================================================
+# Message Types
+# ============================================================================
+
+
+class MetadataMessage(BaseMessage):
+    """Metadata message - information about the simulation run itself."""
+
+    message_type: Literal[MessageType.METADATA] = MessageType.METADATA
+    schema_version: str = Field(default=SCHEMA_VERSION)
+    run_by: Optional[str] = Field(default=None, description="Who ran the simulation")
+    run_at: Optional[str] = Field(
+        default=None, description="When the run started (ISO timestamp)"
+    )
+    git_commit: Optional[str] = Field(default=None, description="Git commit hash")
+    scenario_name: Optional[str] = Field(
+        default=None, description="Name of the scenario"
+    )
+    notes: Optional[str] = Field(default=None, description="Additional notes")
+    dt: Optional[float] = Field(default=None, description="Time step (seconds)")
+    duration: Optional[float] = Field(
+        default=None, description="Total simulation duration (seconds)"
+    )
+
+
+class ConstantMessage(BaseMessage):
+    """Constant message - configuration that can change over time via events."""
+
+    message_type: Literal[MessageType.CONSTANT] = MessageType.CONSTANT
+
+    timestamp: float = Field(
+        description="Simulation time when this constant value becomes valid"
+    )
+
+    # Rocket properties
+    rocket_length: Optional[float] = Field(
+        default=None, description="Length of the rocket (meters)"
+    )
+    rocket_mass: Optional[float] = Field(
+        default=None, description="Mass of the rocket (kilograms)"
+    )
+    rocket_center_of_mass_offset: Optional[RocketVec2] = Field(
+        default=None,
+        description="Offset from the base of the rocket to the center of mass (meters). The vector is in the rocket frame.",
+    )
+    rocket_moment_of_inertia: Optional[float] = Field(
+        default=None,
+        description="Moment of inertia of the rocket (kg*m^2).",
+    )
+    rocket_thrust_application_offset: Optional[RocketVec2] = Field(
+        default=None,
+        description="Offset from the base of the rocket to the point where the thrust is applied (meters). The vector is in the rocket frame.",
+    )
+
+    # World/environment configuration (can change via events!)
+    world_gravity: Optional[WorldVec2] = Field(
+        default=None,
+        description="Gravity vector (m/s^2) in world frame.",
+    )
+    world_wind: Optional[WorldVec2] = Field(
+        default=None,
+        description="Wind velocity vector (m/s) in world frame.",
+    )
+    world_air_density: Optional[float] = Field(
+        default=None,
+        description="Air density (kg/m^3).",
+    )
+
+
+    # # Sensor configuration
+    # sensor_gps_noise_std: Optional[float] = Field(
+    #     default=None,
+    #     description="GPS noise standard deviation (meters).",
+    # )
+    # sensor_imu_orientation_noise_std: Optional[float] = Field(
+    #     default=None,
+    #     description="IMU orientation noise standard deviation (radians).",
+    # )
+    # sensor_imu_angular_velocity_noise_std: Optional[float] = Field(
+    #     default=None,
+    #     description="IMU angular velocity noise standard deviation (radians/second).",
+    # )
+    # sensor_thrust_noise_std: Optional[float] = Field(
+    #     default=None,
+    #     description="Thrust sensor noise standard deviation (Newtons).",
+    # )
+    # sensor_velocity_noise_std: Optional[float] = Field(
+    #     default=None,
+    #     description="Velocity sensor noise standard deviation (m/s).",
+    # )
+
+    # Simulation parameters
+    # seed: Optional[int] = Field(default=None, description="Random seed")
+    # controller_params: Optional[dict] = Field(default=None, description="Controller parameters")
+
+
+class VariableMessage(BaseMessage):
+    """Variable message - dynamic state and sensor data that changes over time."""
+
+    message_type: Literal[MessageType.VARIABLE] = MessageType.VARIABLE
+
+    timestamp: float = Field(
+        default=0.0,
+        description="Simulation time (seconds) from when - until otherwise - this message is valid.",
+    )
+
+    # True state (noumena) - position
+    position: Optional[WorldVec2] = Field(
+        default=None,
+        description="True position (meters) in the world frame.",
+    )
+    velocity: Optional[WorldVec2] = Field(
+        default=None,
+        description="True velocity (m/s) in the world frame.",
+    )
+
+    # True state (noumena) - orientation
+    orientation: Optional[float] = Field(
+        default=None,
+        description="True orientation (radians) in the world frame.",
+    )
+    angular_velocity: Optional[float] = Field(
+        default=None,
+        description="True angular velocity (radians/second) in the world frame.",
+    )
+
+    # True state (noumena) - thrust
+    thrust_vector: Optional[RocketVec2] = Field(
+        default=None,
+        description="True thrust vector (Newtons) in the rocket frame.",
+    )
+    gimbal_angle: Optional[float] = Field(
+        default=None, description="True gimbal angle (radians)"
+    )
+
+    # Sensor readings (phenomena) - GPS
+    gps: Optional[WorldVec2] = Field(
+        default=None,
+        description="GPS reading (meters) in the world frame.",
+    )
+
+    # Sensor readings (phenomena) - thrust sensor
+    thrust_sensor: Optional[float] = Field(
+        default=None,
+        description="Thrust sensor reading (Newtons) in the rocket frame.",
+    )
+
+    # Sensor readings (phenomena) - velocity sensor
+    velocity_sensor: Optional[WorldVec2] = Field(
+        default=None,
+        description="Velocity sensor reading (m/s) in the world frame.",
+    )
+
+
+    # Control commands
+    # commanded_thrust: Optional[float] = Field(
+    #     default=None,
+    #     description="Commanded thrust magnitude (Newtons)",
+    # )
+    # commanded_gimbal: Optional[float] = Field(
+    #     default=None,
+    #     description="Commanded gimbal angle (radians)",
+    # )
+
+    # Rocket properties (if they change over time, e.g., fuel burn)
+    # TODO: Add rocket properties that change over time, e.g., fuel burn
+    # rocket_length: Optional[float] = Field(
+    #     default=None,
+    #     description="Length of the rocket (meters).",
+    # )
+    # rocket_mass: Optional[float] = Field(
+    #     default=None,
+    #     description="Mass of the rocket (kilograms).",
+    # )
+    # rocket_center_of_mass_offset: Optional[SerializableRocketVec2] = Field(
+    #     default=None,
+    #     description="Offset from the base of the rocket to the center of mass (meters). The vector is in the rocket frame.",
+    # )
+    # rocket_moment_of_inertia: Optional[float] = Field(
+    #     default=None,
+    #     description="Moment of inertia of the rocket (kg*m^2).",
+    # )
+    # rocket_thrust_application_offset: Optional[SerializableRocketVec2] = Field(
+    #     default=None,
+    #     description="Offset from the base of the rocket to the point where the thrust is applied (meters). The vector is in the rocket frame.",
+    # )
+
+    # Error metrics (for analysis)
+    # TODO: Add error metrics
+    # position_error: Optional[float] = Field(
+    #     default=None,
+    #     description="Position error (meters)",
+    # )
+    # orientation_error: Optional[float] = Field(
+    #     default=None,
+    #     description="Orientation error (radians)",
+    # )
+
+
+# ============================================================================
+# Union Type
+# ============================================================================
+
+SimMessage = Union[ConstantMessage, VariableMessage, MetadataMessage]
+
+
+# ============================================================================
+# Serialization/Deserialization
+# ============================================================================
+
+
+def write_message(message: SimMessage) -> None:
     """
-    Write the simulation state as a JSON line (NDJSON format) to stdout.
+    Write a simulation message as a JSON line (NDJSON format) to stdout.
+    Uses exclude_none=True to ensure no null values appear in the JSON.
 
     Args:
-        state: The simulation state (as a Pydantic model).
+        message: Any SimMessage type.
     """
     try:
-        json_str = state.model_dump_json(exclude_none=True)
-        # Write directly to sys.stdout for more control (better for I/O redirection & scripts)
+        json_str = message.model_dump_json(exclude_none=True)
         sys.stdout.write(json_str + "\n")
         sys.stdout.flush()
     except BrokenPipeError:
-        # Pipe was closed (e.g., animation script finished reading)
-        # This is normal when piping, so we can safely ignore it
         sys.exit(0)
 
 
-def read_sim_state() -> SimState:
+def read_message() -> SimMessage:
     """
-    Read a single SimState from stdin (one JSON line, NDJSON format).
+    Read a single SimMessage from stdin (one JSON line, NDJSON format).
 
     Returns:
-        SimState: The parsed simulation state.
+        SimMessage: The parsed message (automatically discriminated by message_type).
 
     Raises:
         EOFError: If end of input is reached.
+        ValueError: If message type is unknown or invalid.
     """
-    # Read a single unbuffered line from stdin.
+
     line = sys.stdin.readline()
     if not line:
         raise EOFError("End of input reached.")
     line = line.strip()
     while line == "":
-        # Skip empty lines (don't return None/raise, just look for any content)
         line = sys.stdin.readline()
         if not line:
             raise EOFError("End of input reached.")
         line = line.strip()
+
     data = json.loads(line)
-    return SimState(**data)
+    msg_type = data.get("message_type")
+
+    if msg_type == MessageType.CONSTANT:
+        return ConstantMessage(**data)
+    elif msg_type == MessageType.VARIABLE:
+        return VariableMessage(**data)
+    elif msg_type == MessageType.METADATA:
+        return MetadataMessage(**data)
+    else:
+        raise ValueError(f"Unknown message type: {msg_type}")

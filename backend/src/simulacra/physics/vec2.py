@@ -9,7 +9,14 @@ This module provides Vec2, RocketVec2, and WorldVec2 classes that:
 
 import numpy as np
 from functools import wraps
-from typing import Self, overload, Never
+from typing import Self, overload, Never, Any
+
+try:
+    from pydantic_core import core_schema
+    from pydantic import GetCoreSchemaHandler
+    PYDANTIC_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AVAILABLE = False
 
 
 class Vec2(np.ndarray):
@@ -154,6 +161,39 @@ class Vec2(np.ndarray):
                         [s,  c]])
         result = rot @ self
         return type(self)(result[0], result[1])
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: Any,
+        handler: GetCoreSchemaHandler,
+    ) -> core_schema.CoreSchema:
+        """
+        Pydantic v2 integration: serialize Vec2 as {"x": float, "y": float} dict.
+        """
+        if not PYDANTIC_AVAILABLE:
+            return handler(source_type)
+        
+        def serialize_vec2(value: Vec2) -> dict:
+            """Serialize Vec2 to dict."""
+            return {"x": float(value.x), "y": float(value.y)}
+        
+        def validate_vec2(value: Any) -> Vec2:
+            """Validate and convert dict/list to Vec2."""
+            if isinstance(value, cls):
+                return value
+            if isinstance(value, dict):
+                return cls(value["x"], value["y"])
+            if isinstance(value, (list, tuple)) and len(value) == 2:
+                return cls(float(value[0]), float(value[1]))
+            raise ValueError(f"Cannot convert {type(value)} to {cls.__name__}")
+        
+        return core_schema.no_info_plain_validator_function(
+            validate_vec2,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                serialize_vec2,
+            ),
+        )
 
 
 class RocketVec2(Vec2):
