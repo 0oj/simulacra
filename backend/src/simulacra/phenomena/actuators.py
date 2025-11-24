@@ -2,6 +2,7 @@
 The rocket's effectors. Commands from the controller become physical changes,
 but only if god allows it (saturation, rate limits, failures).
 """
+
 from dataclasses import dataclass
 
 import numpy as np

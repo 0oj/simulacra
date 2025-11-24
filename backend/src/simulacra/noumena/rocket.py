@@ -2,6 +2,7 @@
 The rocket as god sees it. True position, true velocity, true orientation.
 The rocket itself never sees this; it only sees what the sensors reveal.
 """
+
 from dataclasses import dataclass
 
 import numpy as np

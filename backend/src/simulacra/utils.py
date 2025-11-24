@@ -2,6 +2,7 @@
 Utility functions. Small tools that serve both god and prisoner,
 like clamping values to safe bounds.
 """
+
 from typing import TypeVar, Optional
 
 T = TypeVar("T", bound=float)

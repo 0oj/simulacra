@@ -2,6 +2,7 @@
 The corruption of truth. Sensor errors that veil reality from the rocket,
 introducing noise, bias, and other imperfections into the prisoner's perception.
 """
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 

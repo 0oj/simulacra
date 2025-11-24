@@ -2,6 +2,7 @@
 The world as god defines it. Gravity, wind, air density.
 These are the laws that govern the rocket's motion.
 """
+
 from dataclasses import dataclass, field
 
 from ..physics import WorldVec2
