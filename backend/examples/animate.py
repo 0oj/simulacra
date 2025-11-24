@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 import matplotlib.widgets as widgets
 import numpy as np
-from schema import read_sim_state
+from simulacra.schema import read_sim_state
 from typing import Optional
 
 

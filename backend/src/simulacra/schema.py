@@ -1,3 +1,7 @@
+"""
+The record of truth. God writes the simulation state to stdout,
+capturing both the true state and what the rocket perceived.
+"""
 import json
 import sys
 

@@ -1,19 +1,28 @@
-from noumena import Kernel
-from onboard.controller import Controller
+"""
+The test scenario. God orchestrates the simulation, running the controller,
+advancing physics, and recording the truth for later inspection.
+"""
 from typing import Callable, Optional
-from plot.schema import SimState, write_sim_state
-from phenomena.sensors import Sensors
+
+from ..noumena import Kernel
+from ..onboard.controller import Controller
+from ..phenomena.sensors import Sensors
+from ..schema import SimState, write_sim_state
 
 Callback = Callable[[float, Kernel, Controller], None]
 
 
+def default_callback(t: float, kernel: Kernel, controller: Controller): ...
+
+
 class Scenario:
+    _time: float = 0.0
+
     def __init__(
         self,
         kernel: Kernel,
-        sensors: Sensors,
         controller: Controller,
-        callback: Optional[Callback] = None,
+        callback: Optional[Callback] = default_callback,
         dt: float = 0.01,
     ):
         """
@@ -27,21 +36,24 @@ class Scenario:
             dt: Simulation timestep in seconds
         """
         self.kernel = kernel
-        self.sensors = sensors
+        self.sensors = Sensors(self.kernel)
         self.controller = controller
-        self.callback = callback or (lambda t, kernel, controller: None)
+        self.callback = callback
         self.dt = dt
 
-    def run(self, duration: float):
-        t = 0.0
+    def step(self) -> None:
+        self.controller.run()
+        self.kernel.step(self.dt)
+        self.callback(self._time, self.kernel, self.controller)
+        self._time += self.dt
 
-        while t < duration:
-            self.controller.run()
-            self.kernel.step(self.dt)
-            self.callback(t, self.kernel, self.controller)
+    def run(self, duration: float):
+        while self._time < duration:
+            self.step()
+
             write_sim_state(
                 SimState(
-                    t=t,
+                    t=self._time,
                     pos_x=self.kernel.rocket.state.position.x,
                     pos_y=self.kernel.rocket.state.position.y,
                     gimbal_angle=self.kernel.rocket.state.gimbal_angle,
@@ -56,4 +68,3 @@ class Scenario:
                     rocket_length=self.kernel.rocket.properties.length,
                 )
             )
-            t += self.dt

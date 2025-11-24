@@ -1,8 +1,11 @@
+"""
+The physics engine. God's hand that moves the rocket through time,
+applying forces and updating state according to the laws of motion.
+"""
 import numpy as np
 
-from .rocket import Rocket
-from .world import Environment
-from physics import RocketVec2
+from ..noumena.rocket import Rocket
+from ..noumena.world import Environment
 
 
 class Kernel:
@@ -28,13 +31,10 @@ class Kernel:
 
         # Extract thrust (in the rocket frame) from effects
         # TODO: Couldn't this be done in the noumena.rocket.RocketState class? as a property?
-        thrust_vector = RocketVec2(
-            self.rocket.state.thrust_magnitude * np.cos(self.rocket.state.gimbal_angle),
-            self.rocket.state.thrust_magnitude * np.sin(self.rocket.state.gimbal_angle),
-        )
+        thrust_vector = self.rocket.state.thrust_vector
         # Compute the torque in the rocket frame (thrust offset × thrust vector)
         thrust_offset = (
-            self.rocket.properties.thrust_application_point
+            self.rocket.properties.thrust_application_offset
             - self.rocket.properties.center_of_mass_offset
         )
         thrust_torque = np.cross(thrust_offset, thrust_vector)
