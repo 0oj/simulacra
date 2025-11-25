@@ -1,0 +1,48 @@
+---
+alwaysApply: true
+---
+
+# Conventions
+
+## Axes & colors (right‑handed)
+  - **X (red)**, **Y (green)**, **Z (blue)** with \(x \times y = z\).
+  - Right‑hand rule: **thumb = X**, **index = Y**, **middle/ring = Z**.
+
+## Basis planes
+  - **XY plane**: spanned by X (red) and Y (green), normal +Z (blue).
+  - **YZ plane**: spanned by Y (green) and Z (blue), normal +X (red).
+  - **ZX plane**: spanned by Z (blue) and X (red), normal +Y (green).
+  - **Quaternion basis-plane mapping**:  
+    - \(i\) = rotation about X (red), lies in the **YZ plane**  
+    - \(j\) = rotation about Y (green), lies in the **ZX plane**  
+    - \(k\) = rotation about Z (blue), lies in the **XY plane**
+
+## Frames
+  - **World frame**: fixed reference; gravity, wind, and positions live here.
+  - **Body frame**: attached to rocket; thrust vector, torques, and IMU readings are naturally expressed here.
+
+## Quaternions
+  - Stored as `(w, x, y, z)` corresponding to \(w \cdot 1 + x \cdot i + y \cdot j + z \cdot k\).
+  - **Axis mapping**:  
+    - \(i\) ↔ X (red), \(j\) ↔ Y (green), \(k\) ↔ Z (blue).
+  - **Basis plane mapping**:  
+    - \(i\) (X/red): rotation in the YZ plane  
+    - \(j\) (Y/green): rotation in the ZX plane  
+    - \(k\) (Z/blue): rotation in the XY plane
+  - **Algebra**:  
+    - \(i^2 = j^2 = k^2 = ijk = -1\).  
+    - \(ij = k,\ jk = i,\ ki = j\); reversed order gains a minus sign (e.g. \(ji = -k\)).
+
+## Orientation
+  - `orientation` is a **unit quaternion** mapping **body → world**.
+  - Rotation matrix \(R(q)\) derived from `orientation` converts body vectors to world vectors.
+
+## Angular velocity
+  - Stored as **body‑frame** vector \(\boldsymbol{\omega}^B = [\omega_x,\omega_y,\omega_z]\) in rad/s.
+  - Components are roll (about X/red), pitch (about Y/green), yaw (about Z/blue).
+  - Quaternion dynamics: \(\dot{q} = \tfrac{1}{2}\,\Omega(\boldsymbol{\omega}^B)\,q\).
+
+## Inertia & angular momentum
+  - **Inertia tensor**: \(I^B \in \mathbb{R}^{3 \times 3}\), body frame, about COM (often diagonal \(\text{diag}(I_x, I_y, I_z)\)).
+  - **Angular momentum**: \(h^B = I^B \boldsymbol{\omega}^B\) (body frame), \(h^W = R(q) h^B\) (world frame).
+  - Free‑space rigid‑body dynamics: \(I^B \dot{\boldsymbol{\omega}}^B + \boldsymbol{\omega}^B \times (I^B \boldsymbol{\omega}^B) = \tau^B\).

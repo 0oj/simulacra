@@ -2,90 +2,148 @@
 alwaysApply: true
 ---
 
-# Cursor Rules for Simulacra
+## Cursor Rules for Simulacra
 
-These rules define **my preferences, learning requirements, and project style**.  
-Cursor should follow them whenever assisting with this repo.
-
----
-
-## Philosophy
-
-- **Learning > speed.** Favor explicit, step-by-step implementations over hiding details behind libraries.
-- **Elegance matters.** Code should be clean, modular, and beautiful.
-- **Small steps.** Break work into tiny, bite-sized stages. Never dump full code at once. Teach and explain.
-- **Rocket context.** Always keep in mind the harsh realities of rocket software (robustness, failure modes, sensor noise).
-- **Visual-first.** Every feature should have a quick visualization/demo if possible.
+These rules define how to think about this project: the **math**, the **architecture** (noumena / phenomena / onboard), the **coding style**, and the **learning goals**. Cursor should follow them whenever assisting inside this repo.
 
 ---
 
-## Coding Conventions
+### Philosophy
 
-- Use **Python 3.13** with `uv` for dependency management.
-- **Project layout**:  
-  - `src/simulacra/core` — reusable utilities (rk4, clamp, etc.).  
-  - `src/simulacra/steps/stepXX_*` — each step is self-contained, teaching one concept.  
-  - `tests/core/` and `tests/steps/` — pytest test files, named like `test_utils.py`, `test_integrators.py`.  
-  - `scripts/` inside each step for runnable experiments.
+- **Learning > speed**  
+  - Prefer explicit, step‑by‑step implementations over hiding ideas behind heavy libraries or abstractions.  
+  - The point is to understand and iterate on rocket software, not just “get something working”.
 
-- **Types**: use Python type hints everywhere (`float`, `np.ndarray`, `Optional[...]`).
-- **State handling**:  
-  - Keep a clean `State` class with `.as_array()` / `.from_array()`.  
-  - RK4 integrator stays generic (`np.ndarray` in/out).  
-  - Add a thin wrapper (`rk4_state_step`) to keep sim loops clean.
+- **Elegance and clarity**  
+  - Code should be small, composable, and readable.  
+  - Names should reveal physics and intent: `RocketState`, `orientation`, `angular_velocity_body`, `thrust_vector`, etc.
 
----
+- **Small, safe steps**  
+  - Introduce one new concept at a time (e.g. 3D orientation, then angular dynamics, then sensors).  
+  - Avoid giant refactors or huge code dumps; prefer incremental changes that are easy to reason about.
 
-## Examples of Design Decisions
+- **Rocket reality**  
+  - Think like flight software engineers: robustness, failure modes, saturation, sensor noise, and bias.  
+  - Always be explicit about what is truly known vs. what is merely estimated.
 
-### Clamp
-```python
-def clamp(x: Optional[T], lo: T, hi: T) -> Optional[T]:
-    if x is None:
-        return None
-    return lo if x < lo else (hi if x > hi else x)
-````
-
-* Supports `None` for convenience.
-* Explicit, minimal.
-
-### RK4
-
-```python
-def rk4_step(ode_f: ODE_Func, state_vec: StateVec, dt: TimeStep) -> StateVec:
-    k1 = ode_f(state_vec)
-    k2 = ode_f(state_vec + 0.5 * dt * k1)
-    k3 = ode_f(state_vec + 0.5 * dt * k2)
-    k4 = ode_f(state_vec + dt * k3)
-    return state_vec + (dt / 6.0) * (k1 + 2 * k2 + 2 * k3 + k4)
-```
-
-* Generic, works for any ODE.
-* `State` conversions handled outside (wrapper function).
-
-### Visualisation
-
-* Each sim has **animations** (matplotlib) to show altitude vs setpoint, thrust vs time, etc.
-* Animations should be **configurable** and optionally **batch-saved**.
-* Batch mode: produce metrics CSV + plots + gifs.
+- **Visual‑first**  
+  - Whenever possible, back ideas with visualizations: trajectories, attitude plots, thrust over time, etc.  
+  - Plots and animations are part of the design, not an afterthought.
 
 ---
 
-## Learning Requirements
+### Architecture: Noumena, Phenomena, Onboard
 
-* Every new concept should be introduced with a **slow, bite-sized explanation** before code.
-* Explanations should cover **concept → code → test → visualization**.
-* Examples must be runnable immediately.
-* Edge cases and failure modes should be considered at each step.
-* Show metrics (rise time, overshoot, steady-state error, etc.) for control validation.
-* Prefer small experiments and demos over large jumps.
+This is the core mental model; do not break it.
+
+- **Noumena (truth / “god’s view”)**  
+  - Lives in `backend/src/simulacra/noumena/`.  
+  - Holds the **true world state** and physical properties: position, velocity, orientation, body‑frame angular velocity, mass, inertia, environment, thrust vectors, etc.  
+  - Integrates the equations of motion forward in time (e.g. inside `Kernel.step(dt)` and `RocketState`).  
+  - No noise, no bias: just the math we choose to simulate.
+
+- **Phenomena (interfaces)**  
+  - Lives in `backend/src/simulacra/phenomena/`.  
+  - Wraps noumena with **sensors** and **actuators**.  
+    - Sensors expose noisy, biased, delayed measurements of noumenal truth (GPS, velocity sensor, thrust sensor, IMU, etc.).  
+    - Actuators map controller commands (thrust, gimbal angles, valve states) into imperfect forces and torques on the rocket.  
+  - Phenomena is the only way onboard code can “touch” noumena.
+
+- **Onboard (controller / estimator)**  
+  - Lives in `backend/src/simulacra/onboard/`.  
+  - Sees only sensor outputs; never reads noumenal truth directly.  
+  - Maintains its own internal **estimate** of the rocket and issues actuator commands.  
+  - When we are “dumb‑driving” from `Scenario` (e.g. scripted thrust events), the controller may be a no‑op, but the separation still holds.
+
+- **Scenarios and orchestration**  
+  - `backend/src/simulacra/noumena/scenario.py` orchestrates the sim:  
+    - Runs the controller.  
+    - Steps the kernel (physics).  
+    - Schedules and executes events (e.g. thrust changes, gimbal programs).  
+    - Records noumenal truth and sensor readings via schema messages for later analysis/visualization.
 
 ---
 
-## Next Steps to Keep in Mind
+### Math & 3D Conventions
 
-1. Step 01 (vertical hop, PID, IMU noise, visualization).
-2. Step 02 (attitude control: 2D tilt, simple torque model).
-3. Step 03 (3D + quaternions).
-4. Step 04 (sensor fusion: accelerometer + gyro).
-5. Step 05 (full guidance loop).
+- **Axes and colors (right‑handed)**  
+  - **X (red)**, **Y (green)**, **Z (blue)** with \(x \times y = z\).  
+  - Right‑hand rule: **thumb = X**, **index = Y**, **middle/ring = Z**.
+
+- **Basis planes**  
+  - **XY plane**: spanned by X (red) and Y (green), normal +Z (blue).  
+  - **YZ plane**: spanned by Y (green) and Z (blue), normal +X (red).  
+  - **ZX plane**: spanned by Z (blue) and X (red), normal +Y (green).
+
+- **Frames**  
+  - **World frame**: fixed reference; positions, gravity, and wind live here.  
+  - **Body frame**: rigidly attached to the rocket; thrust vectors, torques, and IMU readings are naturally expressed here.  
+  - Both frames use the RGB/XYZ orientation above.
+
+- **Quaternions**  
+  - Stored as `(w, x, y, z)` representing \(w \cdot 1 + x \cdot i + y \cdot j + z \cdot k\).  
+  - **Axis mapping**:  
+    - \(i\) ↔ X (red), \(j\) ↔ Y (green), \(k\) ↔ Z (blue).  
+  - **Algebra**:  
+    - \(i^2 = j^2 = k^2 = ijk = -1\).  
+    - \(ij = k,\ jk = i,\ ki = j\); reversing the order adds a minus sign (e.g. \(ji = -k\)).  
+  - `orientation` is a **unit quaternion** that maps **body → world**.  
+  - The rotation matrix \(R(q)\) derived from `orientation` converts body‑frame vectors into world‑frame vectors.
+
+- **Angular velocity and inertia**  
+  - Angular velocity is stored as a **body‑frame** vector  
+    \(\boldsymbol{\omega}^B = [\omega_x,\ \omega_y,\ \omega_z]\) in radians per second.  
+    - \(\omega_x\): roll about X (red), \(\omega_y\): pitch about Y (green), \(\omega_z\): yaw about Z (blue).  
+  - The inertia tensor \(I^B \in \mathbb{R}^{3 \times 3}\) is defined in the body frame about the center of mass; usually diagonal \(\text{diag}(I_x, I_y, I_z)\) for a symmetric rocket, but allowed to be a full symmetric matrix.  
+  - Angular momentum: \(h^B = I^B \boldsymbol{\omega}^B\) (body frame), and \(h^W = R(q)\,h^B\) (world frame).  
+  - Free rigid‑body dynamics:  
+    \(I^B \dot{\boldsymbol{\omega}}^B + \boldsymbol{\omega}^B \times (I^B \boldsymbol{\omega}^B) = \tau^B\).  
+  - Quaternion kinematics:  
+    \(\dot{q} = \tfrac{1}{2}\,\Omega(\boldsymbol{\omega}^B)\,q\).
+
+---
+
+### Coding Conventions
+
+- **Language & tooling**  
+  - Use **Python** (current version specified in `pyproject.toml` / backend config).  
+  - Use whatever dependency manager the repo currently uses (e.g. `uv` if present) consistently.
+
+- **Current layout (do not assume extra layers)**  
+  - Back‑end rocket sim lives under `backend/src/simulacra/` in the `noumena`, `phenomena`, `onboard`, `physics`, and `schema` modules.  
+  - Front‑end lives under `frontend/`.  
+
+- **Style & types**  
+  - Use Python type hints: `float`, `int`, `np.ndarray`, `tuple[...]`, `Optional[...]`, etc.  
+  - Prefer small, pure functions; keep methods short and focused.  
+  - Be explicit about units (e.g. meters, seconds, radians) in docstrings or type comments.
+
+- **Integration and numerical methods**  
+  - At present, time stepping may be implemented directly inside `Kernel.step` / `RocketState` logic.  
+  - When introducing new integrators (Euler, RK4, etc.), keep them **simple and explicit**, and separate “compute derivatives” from “advance in time”.  
+  - Do not assume an RK4 helper already exists; if needed, introduce it deliberately with tests and documentation.
+
+- **Tests and experiments**  
+  - Favor small pytest tests that encode physical expectations (e.g. conservation properties, sanity checks on trajectories).  
+  - Use `scenarios/` and simple scripts/NDJSON logs for experiments and visualisations.
+
+---
+
+### Learning & Evolution Guidelines
+
+- **Concept → code → test → visualization**  
+  - Before adding new math or physics, write down (even briefly) the concept and assumptions.  
+  - Implement the smallest possible version of that idea in code.  
+  - Add at least one test that would fail if the idea were broken.  
+  - Add a simple plot or animation (even offline) to build intuition.
+
+- **Small, composable features**  
+  - Add features in thin slices:  
+    - First a “dumb” 3D rocket driven by scripted thrust events.  
+    - Later, onboard estimation and control.  
+    - Later still, sensor fusion, guidance, etc.  
+  - Keep each slice understandable on its own.
+
+- **Be honest about approximations**  
+  - Document when you use toy models (no drag, point‑mass, diagonal inertia) vs. when you intend to be more realistic.  
+  - Make it easy to swap in more detailed models later.
