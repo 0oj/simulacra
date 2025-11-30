@@ -13,7 +13,7 @@ from typing import Any, Never, Self, overload
 
 import numpy as np
 
-from .orientation import Orientation
+from .quat import Orientation
 
 try:
     from pydantic_core import core_schema
