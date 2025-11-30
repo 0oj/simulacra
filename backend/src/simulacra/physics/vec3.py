@@ -13,6 +13,8 @@ from typing import Any, Never, Self, overload
 
 import numpy as np
 
+from .orientation import Orientation
+
 try:
     from pydantic_core import core_schema
     from pydantic import GetCoreSchemaHandler
@@ -199,7 +201,14 @@ class Vec3(np.ndarray):
 class RocketVec3(Vec3):
     """Vector in rocket *body* frame (RGB axes attached to the rocket)."""
 
-    # Place for helper methods like to_world(R(q)) later if we want.
+    def to_world(self, orientation: Orientation) -> "WorldVec3":
+        """
+        Convert this body-frame vector into the world frame
+        using the given orientation (body -> world).
+        """
+        R = orientation.rotation_matrix()  # 3x3
+        res = R @ np.asarray(self, dtype=float)
+        return WorldVec3(res[0], res[1], res[2])
 
 
 class WorldVec3(Vec3):

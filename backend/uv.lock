@@ -267,21 +267,30 @@ wheels = [
 ]
 
 [[package]]
-name = "numpy-quaternion"
-version = "2024.0.12"
+name = "numpy-typing-compat"
+version = "20250818.2.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "scipy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/eb/7af61dd6c1063b56f452c0de867955ad4d733aca517e38658829cf4d6b83/numpy_quaternion-2024.0.12.tar.gz", hash = "sha256:5ecb4e310e732bc21687474c1bc6cd6187d5c22da78d342379fe81f12f46037f", size = 67291, upload-time = "2025-09-09T04:49:33.215Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/e3/1a29f174c1e09a2bf111d37a41afceea1b501371abb39e73170ca31a7599/numpy_typing_compat-20250818.2.3.tar.gz", hash = "sha256:72e83d535b635d668ba7315e43ae80be1469a6faea6fc96d312516f39b3d8fa5", size = 4974, upload-time = "2025-08-18T23:46:42.968Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/c1/4133792c1a751eb9e6a03669a1cdf724e5f826e93b6ed9b44631d2695f63/numpy_quaternion-2024.0.12-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:66d3072b9f01b853b32ea99670bb739631aef36ac2317fd845e90b2c887ebd6c", size = 86468, upload-time = "2025-09-09T04:49:26.59Z" },
-    { url = "https://files.pythonhosted.org/packages/16/32/fb0b4fa6edcb442d5547b794c29fb9db038bae9b1d42a958430ae3b4b67f/numpy_quaternion-2024.0.12-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:2c7c302a828b80d2553be50bbde978ed0b6c1dfc7be310afaa083acc75a2e6b3", size = 61268, upload-time = "2025-09-09T04:49:23.052Z" },
-    { url = "https://files.pythonhosted.org/packages/7a/0f/962497d0164174d9631babd623f2b417d6027fcdd81a05763ad9beb8c6dd/numpy_quaternion-2024.0.12-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:e54e41ca9991832aa0303c8956151f1933fc15b5645ef5b8fb6b93356ee30b8b", size = 55496, upload-time = "2025-09-09T04:49:41.345Z" },
-    { url = "https://files.pythonhosted.org/packages/2f/d6/8fd64e4e1f7a3c39785da69f867284db1a37852eed3f9646a0aeb0c27695/numpy_quaternion-2024.0.12-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl", hash = "sha256:f947b8fdccb1cfe6d1157578477741e0c51ba1bb4d43358c5fbb7b26183942fc", size = 190448, upload-time = "2025-09-09T04:49:15.595Z" },
-    { url = "https://files.pythonhosted.org/packages/f7/7f/3507d0959811a4b0b94299daf551baa350eded39fa95bed5a8f4824f378e/numpy_quaternion-2024.0.12-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a02503230d3e5678e955ad1a64cd1738ff2739b9a1cd3fe58d5bc98fd491908f", size = 184849, upload-time = "2025-09-09T04:49:24.998Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/98/8a6a55e2ea86a1c6b39dda696ff03b505ba99d2db4b2efa45fb29c5a4604/numpy_quaternion-2024.0.12-cp313-cp313-win_amd64.whl", hash = "sha256:9ce0fa7af5075b0b0c39bb1ac80fb3fb8b9c5ae3c2140672933391b295f84210", size = 70009, upload-time = "2025-09-09T04:49:12.88Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/4a/fa4c90a03d6a8ee1a7f0e0fb101887d9a8cdb9b07a5901af9ae831e9feea/numpy_typing_compat-20250818.2.3-py3-none-any.whl", hash = "sha256:930413d34dd9083c0bf418815576222f1c66ea2d68950f447fd27ea1a78b26b0", size = 6286, upload-time = "2025-08-18T23:46:35.681Z" },
+]
+
+[[package]]
+name = "optype"
+version = "0.14.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/ca/d3a2abcf12cc8c18ccac1178ef87ab50a235bf386d2401341776fdad18aa/optype-0.14.0.tar.gz", hash = "sha256:925cf060b7d1337647f880401f6094321e7d8e837533b8e159b9a92afa3157c6", size = 100880, upload-time = "2025-10-01T04:49:56.232Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/a6/11b0eb65eeafa87260d36858b69ec4e0072d09e37ea6714280960030bc93/optype-0.14.0-py3-none-any.whl", hash = "sha256:50d02edafd04edf2e5e27d6249760a51b2198adb9f6ffd778030b3d2806b026b", size = 89465, upload-time = "2025-10-01T04:49:54.674Z" },
+]
+
+[package.optional-dependencies]
+numpy = [
+    { name = "numpy" },
+    { name = "numpy-typing-compat" },
 ]
 
 [[package]]
@@ -488,25 +497,43 @@ wheels = [
 ]
 
 [[package]]
+name = "scipy-stubs"
+version = "1.16.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "optype", extra = ["numpy"] },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/04/92/cff57e9c62959229940aeed11327d680c5fdc92521b9fc6f69ed72968339/scipy_stubs-1.16.3.2.tar.gz", hash = "sha256:04c498da2bfb445cf1dce06cb012bbaafd30fa19d9c7b03852a0574e7e83df3a", size = 360452, upload-time = "2025-11-30T09:41:25.027Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/17/4f582549076be60bfc8589b610b0e10dd1bb1fffe84cf0b921b7be271371/scipy_stubs-1.16.3.2-py3-none-any.whl", hash = "sha256:c8df8975d69d77237a12e7b32f0bce08a7cc27bbb53ff7f4671ef1e9de033490", size = 560873, upload-time = "2025-11-30T09:41:23.661Z" },
+]
+
+[[package]]
 name = "simulacra"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "numpy-quaternion" },
     { name = "pydantic" },
     { name = "scipy" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "scipy-stubs" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "matplotlib", specifier = ">=3.10.7" },
     { name = "numpy", specifier = ">=2.3.4" },
-    { name = "numpy-quaternion", specifier = ">=2024.0.12" },
     { name = "pydantic", specifier = ">=2.12.3" },
     { name = "scipy", specifier = ">=1.16.3" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "scipy-stubs", specifier = ">=1.16.3.2" }]
 
 [[package]]
 name = "six"
