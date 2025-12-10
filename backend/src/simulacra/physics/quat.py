@@ -13,10 +13,18 @@ Conventions
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+
+try:
+    from pydantic_core import core_schema
+    from pydantic import GetCoreSchemaHandler
+
+    PYDANTIC_AVAILABLE = True
+except ImportError:  # pragma: no cover - pydantic is optional
+    PYDANTIC_AVAILABLE = False
 
 
 @dataclass
@@ -57,6 +65,25 @@ class Orientation:
         """Build from array-like [w, x, y, z] and normalize."""
         w, x, y, z = map(float, arr)
         return cls(np.array([w, x, y, z], dtype=float)).normalized()
+
+    @classmethod
+    def from_axis_angle(cls, axis: Iterable[float], angle: float) -> "Orientation":
+        """
+        Build from an axis (X/red, Y/green, Z/blue) and rotation angle.
+
+        Args:
+            axis: Iterable[float] of length 3, rotation axis in body frame.
+            angle: Rotation angle in radians, right-hand convention.
+        """
+        axis_arr = np.asarray(axis, dtype=float)
+        n = float(np.linalg.norm(axis_arr))
+        if n == 0.0:
+            return cls.identity()
+        axis_unit = axis_arr / n
+        r = R.from_rotvec(angle * axis_unit)
+        # SciPy returns [x, y, z, w]
+        x, y, z, w = r.as_quat()
+        return cls.from_wxyz(w, x, y, z)
 
     # ---------- representation helpers ----------
 
@@ -112,3 +139,48 @@ class Orientation:
             v_W = R @ v_B
         """
         return self._as_scipy_rotation().as_matrix()
+
+    # ---------- Optional: pydantic v2 schema ---------------------------
+
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        source_type: Any,
+        handler: "GetCoreSchemaHandler",
+    ) -> "core_schema.CoreSchema":
+        """
+        Pydantic v2 integration: serialize Orientation as
+        {"w": float, "x": float, "y": float, "z": float}.
+        """
+        if not PYDANTIC_AVAILABLE:
+            return handler(source_type)
+
+        def serialize_orientation(value: "Orientation") -> dict:
+            w, x, y, z = value.as_array()
+            return {
+                "w": float(w),
+                "x": float(x),
+                "y": float(y),
+                "z": float(z),
+            }
+
+        def validate_orientation(value: Any) -> "Orientation":
+            if isinstance(value, cls):
+                return value
+            if isinstance(value, dict):
+                return cls.from_wxyz(
+                    float(value["w"]),
+                    float(value["x"]),
+                    float(value["y"]),
+                    float(value["z"]),
+                )
+            if isinstance(value, (list, tuple)) and len(value) == 4:
+                return cls.from_array(value)
+            raise ValueError(f"Cannot convert {type(value)} to {cls.__name__}")
+
+        return core_schema.no_info_plain_validator_function(
+            validate_orientation,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                serialize_orientation,
+            ),
+        )

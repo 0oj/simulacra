@@ -56,5 +56,3 @@ def test_rotation_matrix_rotates_vector_about_z() -> None:
     v_body = np.array([1.0, 0.0, 0.0])
     v_world = R @ v_body
     np.testing.assert_allclose(v_world, np.array([0.0, 1.0, 0.0]), atol=1e-12)
-
-

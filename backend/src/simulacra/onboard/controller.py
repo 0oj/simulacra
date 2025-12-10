@@ -2,9 +2,11 @@
 The rocket's control logic. The prisoner's mind that reads sensors
 and commands actuators, never knowing the true state of things.
 """
+
 from abc import ABC, abstractmethod
 
 from ..phenomena.sensors import Sensors
+
 
 class Controller(ABC):
     @abstractmethod
@@ -12,6 +14,7 @@ class Controller(ABC):
 
     @abstractmethod
     def with_sensors(self, sensors: Sensors) -> "Controller": ...
+
 
 class IdentityController(Controller):
     def __init__(self):

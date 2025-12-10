@@ -5,9 +5,10 @@ capturing both the true state and what the rocket perceived.
 
 import json
 import sys
-from typing import Optional, Union, Literal
+from typing import Optional, Union, Literal, Tuple
 
 from .physics.vec2 import RocketVec2, WorldVec2
+from .physics.vec3 import RocketVec3, WorldVec3
 
 from pydantic import BaseModel, Field
 
@@ -84,6 +85,20 @@ class ConstantMessage(BaseMessage):
         description="Offset from the base of the rocket to the point where the thrust is applied (meters). The vector is in the rocket frame.",
     )
 
+    # 3D Rocket properties (for 3D scenarios)
+    rocket_center_of_mass_offset_3d: Optional[RocketVec3] = Field(
+        default=None,
+        description="3D offset from the base of the rocket to the center of mass (meters) in the rocket frame.",
+    )
+    rocket_inertia_diag_3d: Optional[Tuple[float, float, float]] = Field(
+        default=None,
+        description="3D diagonal inertia tensor components (Ix, Iy, Iz) in kg*m^2.",
+    )
+    rocket_thrust_application_offset_3d: Optional[RocketVec3] = Field(
+        default=None,
+        description="3D offset from the base to the thrust application point (meters) in the rocket frame.",
+    )
+
     # World/environment configuration (can change via events!)
     world_gravity: Optional[WorldVec2] = Field(
         default=None,
@@ -96,6 +111,16 @@ class ConstantMessage(BaseMessage):
     world_air_density: Optional[float] = Field(
         default=None,
         description="Air density (kg/m^3).",
+    )
+
+    # 3D Environment configuration
+    world_gravity_3d: Optional[WorldVec3] = Field(
+        default=None,
+        description="Gravity vector (m/s^2) in 3D world frame.",
+    )
+    world_wind_3d: Optional[WorldVec3] = Field(
+        default=None,
+        description="Wind velocity vector (m/s) in 3D world frame.",
     )
 
 
@@ -146,6 +171,16 @@ class VariableMessage(BaseMessage):
         description="True velocity (m/s) in the world frame.",
     )
 
+    # 3D true state (noumena) - position and velocity
+    position_3d: Optional[WorldVec3] = Field(
+        default=None,
+        description="True 3D position (meters) in the world frame.",
+    )
+    velocity_3d: Optional[WorldVec3] = Field(
+        default=None,
+        description="True 3D velocity (m/s) in the world frame.",
+    )
+
     # True state (noumena) - orientation
     orientation: Optional[float] = Field(
         default=None,
@@ -154,6 +189,16 @@ class VariableMessage(BaseMessage):
     angular_velocity: Optional[float] = Field(
         default=None,
         description="True angular velocity (radians/second) in the world frame.",
+    )
+
+    # 3D orientation and angular velocity (body frame)
+    orientation_quat: Optional[Tuple[float, float, float, float]] = Field(
+        default=None,
+        description="True orientation as a quaternion (w, x, y, z) mapping body->world.",
+    )
+    angular_velocity_body_3d: Optional[RocketVec3] = Field(
+        default=None,
+        description="True 3D body-frame angular velocity (rad/s).",
     )
 
     # True state (noumena) - thrust
@@ -165,10 +210,20 @@ class VariableMessage(BaseMessage):
         default=None, description="True gimbal angle (radians)"
     )
 
+    thrust_vector_body_3d: Optional[RocketVec3] = Field(
+        default=None,
+        description="True 3D thrust vector (Newtons) in the rocket body frame.",
+    )
+
     # Sensor readings (phenomena) - GPS
     gps: Optional[WorldVec2] = Field(
         default=None,
         description="GPS reading (meters) in the world frame.",
+    )
+
+    gps_3d: Optional[WorldVec3] = Field(
+        default=None,
+        description="3D GPS reading (meters) in the world frame.",
     )
 
     # Sensor readings (phenomena) - thrust sensor
@@ -181,6 +236,11 @@ class VariableMessage(BaseMessage):
     velocity_sensor: Optional[WorldVec2] = Field(
         default=None,
         description="Velocity sensor reading (m/s) in the world frame.",
+    )
+
+    velocity_sensor_3d: Optional[WorldVec3] = Field(
+        default=None,
+        description="3D velocity sensor reading (m/s) in the world frame.",
     )
 
 
