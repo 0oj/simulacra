@@ -8,64 +8,39 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from ..noumena import Kernel2D
-from ..noumena.rocket import Rocket3D
+from ..noumena.rocket import Rocket
 from ..physics import RocketVec3
 
 
-# ============================================================================
-# 2D actuators (legacy)
-# ============================================================================
+@dataclass
+class ThrottleCommand:
+    """Desired thrust magnitude in Newtons."""
+
+    thrust_N: float
+
+
+class ThrottleActuator:
+    """
+    Throttle actuator controlling thrust magnitude.
+
+    Preserves the current thrust direction while changing magnitude.
+    If the engine was off (zero thrust), defaults to body +X (straight ahead).
+    """
+
+    def __init__(self, rocket: Rocket):
+        self._rocket = rocket
+
+    def apply(self, command: ThrottleCommand) -> None:
+        T = command.thrust_N
+        current = self._rocket.state.thrust_body
+        if current.norm == 0.0:
+            self._rocket.state.thrust_body = RocketVec3(T, 0.0, 0.0)
+        else:
+            self._rocket.state.thrust_body = current.direction * T
 
 
 @dataclass
-class GimbalCommand2D:
-    desired_gimbal_angle: float  # radians, desired gimbal angle
-
-
-class GimbalActuator:
-    max_gimbal_angle: float  # radians, maximum gimbal angle
-
-    def __init__(self, kernel: Kernel2D, max_gimbal_angle: float):
-        self.max_gimbal_angle = max_gimbal_angle
-        self._kernel = kernel
-
-    def apply(self, command: GimbalCommand2D) -> None:
-        ...  # TODO: implement rate limiting, saturation, etc.
-        self._kernel.rocket.state.gimbal_angle = np.clip(
-            command.desired_gimbal_angle,
-            -self.max_gimbal_angle,
-            self.max_gimbal_angle,
-        )
-
-
-@dataclass
-class ThrustCommand2D:
-    desired_thrust_magnitude: float  # Newtons, desired thrust magnitude
-
-
-class ThrustActuator:
-    max_thrust_magnitude: float  # Newtons, maximum thrust magnitude
-
-    def __init__(self, kernel: Kernel2D, max_thrust_magnitude: float):
-        self.max_thrust_magnitude = max_thrust_magnitude
-        self._kernel = kernel
-
-    def apply(self, command: ThrustCommand2D) -> None:
-        self._kernel.rocket.state.thrust_magnitude = np.clip(
-            command.desired_thrust_magnitude,
-            0.0,
-            self.max_thrust_magnitude,
-        )
-
-
-# ============================================================================
-# 3D actuators (work in progress)
-# ============================================================================
-
-
-@dataclass
-class GimbalCommand3D:
+class GimbalCommand:
     """
     Desired outer/inner gimbal angles for a 2-DOF nozzle.
 
@@ -77,9 +52,9 @@ class GimbalCommand3D:
     desired_inner_angle: float  # radians
 
 
-class GimbalActuator3D:
+class GimbalActuator:
     """
-    2-DOF nested gimbal actuator driving the 3D rocket's thrust vector.
+    2-DOF nested gimbal actuator driving the rocket's thrust vector.
 
     Frames (conceptually):
     - Body frame B: attached to the rocket, +X along the nose.
@@ -98,7 +73,7 @@ class GimbalActuator3D:
 
     def __init__(
         self,
-        rocket: Rocket3D,
+        rocket: Rocket,
         max_outer_angle: float,
         max_inner_angle: float,
     ):
@@ -109,7 +84,7 @@ class GimbalActuator3D:
         self.outer_angle: float = 0.0
         self.inner_angle: float = 0.0
 
-    def apply(self, command: GimbalCommand3D) -> None:
+    def apply(self, command: GimbalCommand) -> None:
         """
         Update internal gimbal angles and write thrust_vector_body on the rocket.
         """
@@ -132,9 +107,9 @@ class GimbalActuator3D:
         # Compute unit nozzle direction in body frame using nested frames.
         dir_body = _nozzle_direction_body(self.outer_angle, self.inner_angle)
 
-        # Scale by current thrust magnitude from noumena state.
-        T = float(self._rocket.state.thrust_magnitude)
-        self._rocket.state.thrust_direction = RocketVec3(
+        # Preserve current thrust magnitude, redirect it.
+        T = float(self._rocket.state.thrust_body.norm)
+        self._rocket.state.thrust_body = RocketVec3(
             T * dir_body[0],
             T * dir_body[1],
             T * dir_body[2],

@@ -1,13 +1,13 @@
 import numpy as np
 
-from simulacra.noumena.kernel import Kernel3D
-from simulacra.noumena.rocket import Rocket3D, RocketProps3D, RocketState3D, get_upright_orientation
-from simulacra.noumena.world import Environment3D
+from simulacra.noumena.kernel import Kernel
+from simulacra.noumena.rocket import Rocket, RocketProps, RocketState, get_upright_orientation
+from simulacra.noumena.world import Environment
 from simulacra.physics import RocketVec3, WorldVec3
 
 
-def make_simple_rocket3d(mass: float = 10.0, thrust: float = 0.0) -> tuple[Rocket3D, Environment3D]:
-    props = RocketProps3D(
+def make_simple_rocket(mass: float = 10.0, thrust: float = 0.0) -> tuple[Rocket, Environment]:
+    props = RocketProps(
         length=1.0,
         mass=mass,
         center_of_mass_offset=RocketVec3(0.0, 0.0, 0.0),
@@ -15,24 +15,23 @@ def make_simple_rocket3d(mass: float = 10.0, thrust: float = 0.0) -> tuple[Rocke
         thrust_application_offset=RocketVec3(0.0, 0.0, 0.0),
     )
 
-    state = RocketState3D(
-        position=WorldVec3(0.0, 0.0, 0.0),
+    state = RocketState(
+        position=WorldVec3(0.0, 100.0, 0.0),
         velocity=WorldVec3(0.0, 0.0, 0.0),
         orientation=get_upright_orientation(),
         angular_velocity_body=RocketVec3(0.0, 0.0, 0.0),
-        thrust_magnitude=thrust,
-        thrust_direction=RocketVec3(thrust, 0.0, 0.0),
+        thrust_body=RocketVec3(thrust, 0.0, 0.0),
     )
 
-    rocket = Rocket3D(props=props, state=state)
-    env = Environment3D()
+    rocket = Rocket(props=props, state=state)
+    env = Environment()
     return rocket, env
 
 
 def test_kernel3d_free_fall_matches_gravity() -> None:
     mass = 10.0
-    rocket, env = make_simple_rocket3d(mass=mass, thrust=0.0)
-    k = Kernel3D(rocket, env)
+    rocket, env = make_simple_rocket(mass=mass, thrust=0.0)
+    k = Kernel(rocket, env)
 
     dt = 0.1
     k.step(dt)
@@ -47,8 +46,8 @@ def test_kernel3d_hover_when_thrust_equals_weight() -> None:
     g = -9.81
     thrust = mass * (-g)
 
-    rocket, env = make_simple_rocket3d(mass=mass, thrust=thrust)
-    k = Kernel3D(rocket, env)
+    rocket, env = make_simple_rocket(mass=mass, thrust=thrust)
+    k = Kernel(rocket, env)
 
     dt = 0.1
     k.step(dt)
@@ -57,5 +56,3 @@ def test_kernel3d_hover_when_thrust_equals_weight() -> None:
     # If thrust == weight, net acceleration should be ~0.
     vy = rocket.state.velocity.y
     np.testing.assert_allclose(vy, 0.0, atol=1e-12)
-
-

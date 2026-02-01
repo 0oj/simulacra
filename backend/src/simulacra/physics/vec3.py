@@ -214,4 +214,11 @@ class RocketVec3(Vec3):
 class WorldVec3(Vec3):
     """Vector in world frame (global RGB axes)."""
 
-    pass
+    def to_body(self, orientation: Orientation) -> "RocketVec3":
+        """
+        Convert this world-frame vector into the body frame
+        using the given orientation (body -> world).
+        """
+        R = orientation.rotation_matrix()  # body -> world
+        res = R.T @ np.asarray(self, dtype=float)  # world -> body
+        return RocketVec3(res[0], res[1], res[2])

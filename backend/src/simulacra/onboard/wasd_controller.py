@@ -4,7 +4,7 @@ import tty
 import termios
 from .controller import Controller
 from ..phenomena.sensors import Sensors
-from ..phenomena.actuators import GimbalActuator3D, GimbalCommand3D
+from ..phenomena.actuators import GimbalActuator, GimbalCommand
 
 
 class WASDController(Controller):
@@ -16,7 +16,7 @@ class WASDController(Controller):
       - A/D: yaw left/right (outer gimbal: +Z axis, blue)
     """
 
-    def __init__(self, gimbal_actuator: GimbalActuator3D):
+    def __init__(self, gimbal_actuator: GimbalActuator):
         self.sensors: Sensors | None = None
         self.gimbal_actuator = gimbal_actuator
 
@@ -87,7 +87,7 @@ class WASDController(Controller):
 
         # Command the actuator
         self.gimbal_actuator.apply(
-            GimbalCommand3D(
+            GimbalCommand(
                 desired_outer_angle=self.outer_angle,
                 desired_inner_angle=self.inner_angle,
             )
