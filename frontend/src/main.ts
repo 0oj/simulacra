@@ -1,6 +1,4 @@
 import './style.css'
+import { App } from './app'
 
-import * as THREE from 'three'
-
-
-
+new App()

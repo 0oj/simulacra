@@ -1,6 +1,292 @@
+/* ============================================================================
+   Base
+   ============================================================================ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --bg-deep: #0a0e1a;
+  --bg-panel: #0f1629;
+  --border: #1a2744;
+  --text: #e8eaed;
+  --text-dim: #5a6577;
+  --text-muted: #3a4455;
+  --accent: #3b82f6;
+  --cursor: #f59e0b;
+
+  --font: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Consolas', monospace;
+}
+
 body {
   margin: 0;
   padding: 0;
   overflow: hidden;
-  background-color: #000;
+  background: var(--bg-deep);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ============================================================================
+   App layout
+   ============================================================================ */
+
+#app {
+  display: grid;
+  grid-template-rows: 36px 1fr 40px;
+  height: 100vh;
+  width: 100vw;
+}
+
+#app.drag-over::after {
+  content: 'DROP FILES';
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  letter-spacing: 6px;
+  color: var(--accent);
+  background: rgba(10, 14, 26, 0.85);
+  border: 2px solid var(--accent);
+  z-index: 100;
+  pointer-events: none;
+}
+
+/* ============================================================================
+   Header
+   ============================================================================ */
+
+#header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+#brand {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+#scenario-list {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  overflow-x: auto;
+  padding: 0 8px;
+}
+
+.scenario-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+#header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+#header-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+#header-actions button:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/* ============================================================================
+   Main area: 3D scene + charts
+   ============================================================================ */
+
+#main {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  overflow: hidden;
+}
+
+#scene-container {
+  position: relative;
+  overflow: hidden;
+}
+
+#scene-container canvas {
+  display: block;
+}
+
+#empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  letter-spacing: 4px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* ============================================================================
+   Charts panel
+   ============================================================================ */
+
+#charts-container {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+
+.chart-slot {
+  flex: 1;
+  min-height: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.chart-slot:last-child {
+  border-bottom: none;
+}
+
+.chart-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ============================================================================
+   Playback bar
+   ============================================================================ */
+
+#playback-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+#playback-controls {
+  display: flex;
+  gap: 2px;
+}
+
+.pb-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 13px;
+  width: 28px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.pb-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/* Timeline slider */
+
+#timeline {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  background: var(--border);
+  outline: none;
+  cursor: pointer;
+}
+
+#timeline::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 16px;
+  background: var(--text-dim);
+  border: none;
+  cursor: pointer;
+}
+
+#timeline::-moz-range-thumb {
+  width: 10px;
+  height: 16px;
+  background: var(--text-dim);
+  border: none;
+  cursor: pointer;
+}
+
+#time-readout {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  min-width: 140px;
+}
+
+#speed-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#speed-display {
+  font-size: 11px;
+  color: var(--text-dim);
+  min-width: 32px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+   Responsive: stack on narrow screens
+   ============================================================================ */
+
+@media (max-width: 800px) {
+  #main {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 50%;
+  }
+
+  #charts-container {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
 }
