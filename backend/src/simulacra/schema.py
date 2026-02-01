@@ -5,22 +5,55 @@ capturing both the true state and what the rocket perceived.
 
 import json
 import sys
-from typing import Optional, Union, Literal, Tuple
+from dataclasses import dataclass
+from typing import Annotated, Any, Callable, Optional, Union, Literal, Tuple
 
-from .physics.vec2 import RocketVec2, WorldVec2
 from .physics.vec3 import RocketVec3, WorldVec3
 
 from pydantic import BaseModel, Field
 
 from enum import Enum
 
-SCHEMA_VERSION = "0.1.0"
+
+# ============================================================================
+# Source Annotations
+# ============================================================================
+
+
+@dataclass(frozen=True)
+class Source:
+    """Metadata marker declaring where a field's value comes from at runtime."""
+    kind: str       # "state", "sensors", "props", "env"
+    attr: str       # attribute name on the root object
+    transform: str | None = None
+
+
+# Convenience type aliases for annotated fields
+def State(attr: str, transform: str | None = None):
+    return Source("state", attr, transform)
+
+def Sensor(attr: str):
+    return Source("sensors", attr)
+
+def Props(attr: str):
+    return Source("props", attr)
+
+def Env(attr: str):
+    return Source("env", attr)
+
+
+TRANSFORMS: dict[str, Callable[[Any], Any]] = {
+    "orientation_to_quat": lambda o: tuple(o.as_array()),
+}
+
+SCHEMA_VERSION = "0.2.0"
 
 
 class MessageType(str, Enum):
     METADATA = "metadata"
     CONSTANT = "constant"
     VARIABLE = "variable"
+    DEBUG = "debug"
 
 
 class BaseMessage(BaseModel):
@@ -66,89 +99,38 @@ class ConstantMessage(BaseMessage):
     )
 
     # Rocket properties
-    rocket_length: Optional[float] = Field(
-        default=None, description="Length of the rocket (meters)"
+    rocket_length: Annotated[Optional[float], Props("length")] = Field(
+        default=None, description="Length of the rocket (meters)",
     )
-    rocket_mass: Optional[float] = Field(
-        default=None, description="Mass of the rocket (kilograms)"
+    rocket_mass: Annotated[Optional[float], Props("mass")] = Field(
+        default=None, description="Mass of the rocket (kilograms)",
     )
-    rocket_center_of_mass_offset: Optional[RocketVec2] = Field(
+    rocket_center_of_mass_offset: Annotated[Optional[RocketVec3], Props("center_of_mass_offset")] = Field(
         default=None,
-        description="Offset from the base of the rocket to the center of mass (meters). The vector is in the rocket frame.",
+        description="Offset from the base of the rocket to the center of mass (meters) in the rocket frame.",
     )
-    rocket_moment_of_inertia: Optional[float] = Field(
+    rocket_inertia_diag: Annotated[Optional[Tuple[float, float, float]], Props("inertia_diag")] = Field(
         default=None,
-        description="Moment of inertia of the rocket (kg*m^2).",
+        description="Diagonal inertia tensor components (Ix, Iy, Iz) in kg*m^2.",
     )
-    rocket_thrust_application_offset: Optional[RocketVec2] = Field(
+    rocket_thrust_application_offset: Annotated[Optional[RocketVec3], Props("thrust_application_offset")] = Field(
         default=None,
-        description="Offset from the base of the rocket to the point where the thrust is applied (meters). The vector is in the rocket frame.",
-    )
-
-    # 3D Rocket properties (for 3D scenarios)
-    rocket_center_of_mass_offset_3d: Optional[RocketVec3] = Field(
-        default=None,
-        description="3D offset from the base of the rocket to the center of mass (meters) in the rocket frame.",
-    )
-    rocket_inertia_diag_3d: Optional[Tuple[float, float, float]] = Field(
-        default=None,
-        description="3D diagonal inertia tensor components (Ix, Iy, Iz) in kg*m^2.",
-    )
-    rocket_thrust_application_offset_3d: Optional[RocketVec3] = Field(
-        default=None,
-        description="3D offset from the base to the thrust application point (meters) in the rocket frame.",
+        description="Offset from the base to the thrust application point (meters) in the rocket frame.",
     )
 
     # World/environment configuration (can change via events!)
-    world_gravity: Optional[WorldVec2] = Field(
+    world_gravity: Annotated[Optional[WorldVec3], Env("gravity")] = Field(
         default=None,
         description="Gravity vector (m/s^2) in world frame.",
     )
-    world_wind: Optional[WorldVec2] = Field(
+    world_wind: Annotated[Optional[WorldVec3], Env("wind")] = Field(
         default=None,
         description="Wind velocity vector (m/s) in world frame.",
     )
-    world_air_density: Optional[float] = Field(
+    world_air_density: Annotated[Optional[float], Env("air_density")] = Field(
         default=None,
         description="Air density (kg/m^3).",
     )
-
-    # 3D Environment configuration
-    world_gravity_3d: Optional[WorldVec3] = Field(
-        default=None,
-        description="Gravity vector (m/s^2) in 3D world frame.",
-    )
-    world_wind_3d: Optional[WorldVec3] = Field(
-        default=None,
-        description="Wind velocity vector (m/s) in 3D world frame.",
-    )
-
-
-    # # Sensor configuration
-    # sensor_gps_noise_std: Optional[float] = Field(
-    #     default=None,
-    #     description="GPS noise standard deviation (meters).",
-    # )
-    # sensor_imu_orientation_noise_std: Optional[float] = Field(
-    #     default=None,
-    #     description="IMU orientation noise standard deviation (radians).",
-    # )
-    # sensor_imu_angular_velocity_noise_std: Optional[float] = Field(
-    #     default=None,
-    #     description="IMU angular velocity noise standard deviation (radians/second).",
-    # )
-    # sensor_thrust_noise_std: Optional[float] = Field(
-    #     default=None,
-    #     description="Thrust sensor noise standard deviation (Newtons).",
-    # )
-    # sensor_velocity_noise_std: Optional[float] = Field(
-    #     default=None,
-    #     description="Velocity sensor noise standard deviation (m/s).",
-    # )
-
-    # Simulation parameters
-    # seed: Optional[int] = Field(default=None, description="Random seed")
-    # controller_params: Optional[dict] = Field(default=None, description="Controller parameters")
 
 
 class VariableMessage(BaseMessage):
@@ -161,139 +143,103 @@ class VariableMessage(BaseMessage):
         description="Simulation time (seconds) from when - until otherwise - this message is valid.",
     )
 
-    # True state (noumena) - position
-    position: Optional[WorldVec2] = Field(
+    # True state (noumena) - position and velocity
+    position: Annotated[Optional[WorldVec3], State("position")] = Field(
         default=None,
         description="True position (meters) in the world frame.",
     )
-    velocity: Optional[WorldVec2] = Field(
+    velocity: Annotated[Optional[WorldVec3], State("velocity")] = Field(
         default=None,
         description="True velocity (m/s) in the world frame.",
     )
 
-    # 3D true state (noumena) - position and velocity
-    position_3d: Optional[WorldVec3] = Field(
-        default=None,
-        description="True 3D position (meters) in the world frame.",
-    )
-    velocity_3d: Optional[WorldVec3] = Field(
-        default=None,
-        description="True 3D velocity (m/s) in the world frame.",
-    )
-
-    # True state (noumena) - orientation
-    orientation: Optional[float] = Field(
-        default=None,
-        description="True orientation (radians) in the world frame.",
-    )
-    angular_velocity: Optional[float] = Field(
-        default=None,
-        description="True angular velocity (radians/second) in the world frame.",
-    )
-
-    # 3D orientation and angular velocity (body frame)
-    orientation_quat: Optional[Tuple[float, float, float, float]] = Field(
+    # True state (noumena) - orientation and angular velocity
+    orientation_quat: Annotated[Optional[Tuple[float, float, float, float]], State("orientation", transform="orientation_to_quat")] = Field(
         default=None,
         description="True orientation as a quaternion (w, x, y, z) mapping body->world.",
     )
-    angular_velocity_body_3d: Optional[RocketVec3] = Field(
+    angular_velocity_body: Annotated[Optional[RocketVec3], State("angular_velocity_body")] = Field(
         default=None,
-        description="True 3D body-frame angular velocity (rad/s).",
+        description="True body-frame angular velocity (rad/s).",
     )
 
     # True state (noumena) - thrust
-    thrust_vector: Optional[RocketVec2] = Field(
+    thrust_vector_body: Annotated[Optional[RocketVec3], State("thrust_body")] = Field(
         default=None,
-        description="True thrust vector (Newtons) in the rocket frame.",
-    )
-    gimbal_angle: Optional[float] = Field(
-        default=None, description="True gimbal angle (radians)"
-    )
-
-    thrust_vector_body_3d: Optional[RocketVec3] = Field(
-        default=None,
-        description="True 3D thrust vector (Newtons) in the rocket body frame.",
+        description="True thrust vector (Newtons) in the rocket body frame.",
     )
 
     # Sensor readings (phenomena) - GPS
-    gps: Optional[WorldVec2] = Field(
+    gps: Annotated[Optional[WorldVec3], Sensor("GPS")] = Field(
         default=None,
         description="GPS reading (meters) in the world frame.",
     )
 
-    gps_3d: Optional[WorldVec3] = Field(
-        default=None,
-        description="3D GPS reading (meters) in the world frame.",
-    )
-
     # Sensor readings (phenomena) - thrust sensor
-    thrust_sensor: Optional[float] = Field(
+    thrust_sensor: Annotated[Optional[float], Sensor("ThrustSensor")] = Field(
         default=None,
         description="Thrust sensor reading (Newtons) in the rocket frame.",
     )
 
     # Sensor readings (phenomena) - velocity sensor
-    velocity_sensor: Optional[WorldVec2] = Field(
+    velocity_sensor: Annotated[Optional[WorldVec3], Sensor("VelocitySensor")] = Field(
         default=None,
         description="Velocity sensor reading (m/s) in the world frame.",
     )
 
-    velocity_sensor_3d: Optional[WorldVec3] = Field(
-        default=None,
-        description="3D velocity sensor reading (m/s) in the world frame.",
+
+class DebugMessage(BaseMessage):
+    """Free-form debug/annotation message tied to a simulation time."""
+
+    message_type: Literal[MessageType.DEBUG] = MessageType.DEBUG
+
+    timestamp: float = Field(
+        description="Simulation time (seconds) this message refers to."
+    )
+    text: str = Field(
+        description="Arbitrary debug or annotation string."
     )
 
 
-    # Control commands
-    # commanded_thrust: Optional[float] = Field(
-    #     default=None,
-    #     description="Commanded thrust magnitude (Newtons)",
-    # )
-    # commanded_gimbal: Optional[float] = Field(
-    #     default=None,
-    #     description="Commanded gimbal angle (radians)",
-    # )
+# ============================================================================
+# Auto-Collection
+# ============================================================================
 
-    # Rocket properties (if they change over time, e.g., fuel burn)
-    # TODO: Add rocket properties that change over time, e.g., fuel burn
-    # rocket_length: Optional[float] = Field(
-    #     default=None,
-    #     description="Length of the rocket (meters).",
-    # )
-    # rocket_mass: Optional[float] = Field(
-    #     default=None,
-    #     description="Mass of the rocket (kilograms).",
-    # )
-    # rocket_center_of_mass_offset: Optional[SerializableRocketVec2] = Field(
-    #     default=None,
-    #     description="Offset from the base of the rocket to the center of mass (meters). The vector is in the rocket frame.",
-    # )
-    # rocket_moment_of_inertia: Optional[float] = Field(
-    #     default=None,
-    #     description="Moment of inertia of the rocket (kg*m^2).",
-    # )
-    # rocket_thrust_application_offset: Optional[SerializableRocketVec2] = Field(
-    #     default=None,
-    #     description="Offset from the base of the rocket to the point where the thrust is applied (meters). The vector is in the rocket frame.",
-    # )
 
-    # Error metrics (for analysis)
-    # TODO: Add error metrics
-    # position_error: Optional[float] = Field(
-    #     default=None,
-    #     description="Position error (meters)",
-    # )
-    # orientation_error: Optional[float] = Field(
-    #     default=None,
-    #     description="Orientation error (radians)",
-    # )
+def _get_source(field_info) -> Source | None:
+    """Extract the Source marker from a field's Annotated metadata, if present."""
+    for item in field_info.metadata:
+        if isinstance(item, Source):
+            return item
+    return None
+
+
+def collect(message_cls: type[BaseMessage], timestamp: float, **roots: Any) -> BaseMessage:
+    """
+    Build a message by reading source annotations from the model's fields.
+
+    roots: named objects to resolve against (state=..., sensors=..., props=..., env=...)
+    """
+    data: dict[str, Any] = {"timestamp": timestamp}
+    for field_name, field_info in message_cls.model_fields.items():
+        source = _get_source(field_info)
+        if source is None:
+            continue
+        root_obj = roots[source.kind]
+        value = getattr(root_obj, source.attr)
+        if source.kind == "sensors":
+            value = value.read()
+        if source.transform:
+            value = TRANSFORMS[source.transform](value)
+        data[field_name] = value
+    return message_cls(**data)
 
 
 # ============================================================================
 # Union Type
 # ============================================================================
 
-SimMessage = Union[ConstantMessage, VariableMessage, MetadataMessage]
+SimMessage = Union[ConstantMessage, VariableMessage, MetadataMessage, DebugMessage]
 
 
 # ============================================================================
@@ -317,9 +263,12 @@ def write_message(message: SimMessage) -> None:
         sys.exit(0)
 
 
-def read_message() -> SimMessage:
+def read_message(stream=None) -> SimMessage:
     """
-    Read a single SimMessage from stdin (one JSON line, NDJSON format).
+    Read a single SimMessage from a stream (one JSON line, NDJSON format).
+
+    Args:
+        stream: Readable text stream. Defaults to sys.stdin.
 
     Returns:
         SimMessage: The parsed message (automatically discriminated by message_type).
@@ -328,13 +277,15 @@ def read_message() -> SimMessage:
         EOFError: If end of input is reached.
         ValueError: If message type is unknown or invalid.
     """
+    if stream is None:
+        stream = sys.stdin
 
-    line = sys.stdin.readline()
+    line = stream.readline()
     if not line:
         raise EOFError("End of input reached.")
     line = line.strip()
     while line == "":
-        line = sys.stdin.readline()
+        line = stream.readline()
         if not line:
             raise EOFError("End of input reached.")
         line = line.strip()
@@ -348,5 +299,7 @@ def read_message() -> SimMessage:
         return VariableMessage(**data)
     elif msg_type == MessageType.METADATA:
         return MetadataMessage(**data)
+    elif msg_type == MessageType.DEBUG:
+        return DebugMessage(**data)
     else:
         raise ValueError(f"Unknown message type: {msg_type}")
