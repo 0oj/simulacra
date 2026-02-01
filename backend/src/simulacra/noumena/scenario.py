@@ -116,6 +116,9 @@ class Scenario:
             VariableMessage, self._time,
             state=self.kernel.rocket.state,
             sensors=self.sensors,
+            props=self.kernel.rocket.props,
+            model=self.kernel.rocket.mass_model,
+            ground=self.kernel.ground_contact,
         )
         write_message(message)
 

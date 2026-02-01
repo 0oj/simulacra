@@ -41,6 +41,12 @@ def Props(attr: str):
 def Env(attr: str):
     return Source("env", attr)
 
+def Model(attr: str):
+    return Source("model", attr)
+
+def Ground(attr: str):
+    return Source("ground", attr)
+
 
 TRANSFORMS: dict[str, Callable[[Any], Any]] = {
     "orientation_to_quat": lambda o: tuple(o.as_array()),
@@ -169,6 +175,16 @@ class VariableMessage(BaseMessage):
         description="True thrust vector (Newtons) in the rocket body frame.",
     )
 
+    # Mass model
+    rocket_mass: Annotated[Optional[float], Props("mass")] = Field(
+        default=None,
+        description="Current rocket mass (kg), including remaining fuel.",
+    )
+    fuel_fraction: Annotated[Optional[float], Model("fuel_fraction")] = Field(
+        default=None,
+        description="Remaining fuel as a fraction 0..1 (0 = empty, 1 = full).",
+    )
+
     # Sensor readings (phenomena) - GPS
     gps: Annotated[Optional[WorldVec3], Sensor("GPS")] = Field(
         default=None,
@@ -185,6 +201,28 @@ class VariableMessage(BaseMessage):
     velocity_sensor: Annotated[Optional[WorldVec3], Sensor("VelocitySensor")] = Field(
         default=None,
         description="Velocity sensor reading (m/s) in the world frame.",
+    )
+
+    # Ground contact / landing metrics
+    on_ground: Annotated[Optional[bool], Ground("on_ground")] = Field(
+        default=None,
+        description="Whether the rocket is on the ground.",
+    )
+    tipped_over: Annotated[Optional[bool], Ground("tipped_over")] = Field(
+        default=None,
+        description="Whether the rocket has tipped over (nose below horizontal).",
+    )
+    impact_speed: Annotated[Optional[float], Ground("impact_speed")] = Field(
+        default=None,
+        description="Total speed at touchdown (m/s).",
+    )
+    impact_vertical_speed: Annotated[Optional[float], Ground("impact_vertical_speed")] = Field(
+        default=None,
+        description="Downward speed component at touchdown (m/s).",
+    )
+    landing_angle: Annotated[Optional[float], Ground("landing_angle")] = Field(
+        default=None,
+        description="Angle from vertical at touchdown (radians, 0 = upright).",
     )
 
 
@@ -218,7 +256,7 @@ def collect(message_cls: type[BaseMessage], timestamp: float, **roots: Any) -> B
     """
     Build a message by reading source annotations from the model's fields.
 
-    roots: named objects to resolve against (state=..., sensors=..., props=..., env=...)
+    roots: named objects to resolve against (state=..., sensors=..., props=..., env=..., model=...)
     """
     data: dict[str, Any] = {"timestamp": timestamp}
     for field_name, field_info in message_cls.model_fields.items():
