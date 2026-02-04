@@ -148,6 +148,7 @@ class Kernel:
             # Latch impact metrics on airborne → grounded transition
             if was_airborne:
                 self._latch_impact_metrics()
+                self._apply_impact_angular_impulse()
 
             # Clamp position and velocity
             s.position.y = 0.0
@@ -172,6 +173,69 @@ class Kernel:
             if self.ground_contact.on_ground:
                 self._reset_on_liftoff()
             self.ground_contact.on_ground = False
+
+    def _apply_impact_angular_impulse(self) -> None:
+        """
+        Convert linear momentum into angular momentum at ground impact.
+
+        When the base hits the ground, the ground impulse acts at the
+        contact point.  Since the impulse passes through the contact
+        point it has zero moment about it, so angular momentum about
+        the base is conserved:
+
+            L_base_before  =  m (r × v) + I_world · ω
+            L_base_after   =  I_base · ω_after
+
+        where r = base-to-CoM vector and I_base uses the parallel-axis
+        theorem.  Solving for ω_after gives the correct post-impact
+        angular velocity.
+        """
+        import numpy as np
+
+        s = self.rocket.state
+        p = self.rocket.props
+
+        R_mat = s.orientation.rotation_matrix()
+
+        # r = vector from base to CoM in world frame
+        r_body = np.array([
+            p.center_of_mass_offset.x,
+            p.center_of_mass_offset.y,
+            p.center_of_mass_offset.z,
+        ])
+        r = R_mat @ r_body
+
+        # Pre-impact velocity and angular velocity in world frame
+        v = np.array([s.velocity.x, s.velocity.y, s.velocity.z])
+        omega_body = np.array([
+            s.angular_velocity_body.x,
+            s.angular_velocity_body.y,
+            s.angular_velocity_body.z,
+        ])
+        omega_world = R_mat @ omega_body
+
+        # World-frame inertia about CoM: I_world = R · diag(Ix,Iy,Iz) · R^T
+        I_body = np.diag(p.inertia_diag)
+        I_cm_world = R_mat @ I_body @ R_mat.T
+
+        # Angular momentum about the base contact point (conserved)
+        L_base = p.mass * np.cross(r, v) + I_cm_world @ omega_world
+
+        # Parallel-axis theorem: I_base = I_cm + m·(|r|²·I - r⊗r)
+        I_base = I_cm_world + p.mass * (
+            np.dot(r, r) * np.eye(3) - np.outer(r, r)
+        )
+
+        # Solve I_base · ω_after = L_base
+        omega_after_world = np.linalg.solve(I_base, L_base)
+
+        # Convert back to body frame
+        omega_after_body = R_mat.T @ omega_after_world
+        s.angular_velocity_body = RocketVec3(
+            float(omega_after_body[0]),
+            float(omega_after_body[1]),
+            float(omega_after_body[2]),
+        )
 
     def _latch_impact_metrics(self) -> None:
         """Record impact metrics at the moment of touchdown."""

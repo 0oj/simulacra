@@ -25,6 +25,7 @@ export interface ConstantMessage {
   rocket_inertia_diag?: [number, number, number]
   rocket_thrust_application_offset?: Vec3
   world_gravity?: Vec3
+  world_wind?: Vec3
 }
 
 export interface VariableMessage {
@@ -43,6 +44,7 @@ export interface VariableMessage {
   on_ground?: boolean
   tipped_over?: boolean
   impact_speed?: number
+  impact_vertical_speed?: number
   landing_angle?: number
 }
 
@@ -71,11 +73,24 @@ export interface FlightFrame {
   angularVelBody: [number, number, number]
   mass: number
   fuelFraction: number
+
+  // Sensor readings (phenomena)
+  gps: [number, number, number] | null
+  thrustSensor: number | null
+  velocitySensor: [number, number, number] | null
+
+  // Ground contact
+  onGround: boolean
+  tippedOver: boolean
+  impactSpeed: number | null
+  impactVerticalSpeed: number | null
+  landingAngle: number | null
 }
 
 export interface FlightData {
   dt: number
   rocketLength: number
+  wind: [number, number, number] | null
   frames: FlightFrame[]
   debugMsgs: Array<{ time: number; text: string }>
 }
@@ -146,6 +161,86 @@ export const CHART_DEFS: ChartDef[] = [
     unit: 'rad/s',
     extract: (f) => [f.angularVelBody[0], f.angularVelBody[1], f.angularVelBody[2]],
     componentLabels: ['ωx', 'ωy', 'ωz'],
+  },
+  {
+    id: 'fuel',
+    label: 'FUEL',
+    unit: '%',
+    extract: (f) => f.fuelFraction * 100,
+  },
+  {
+    id: 'gps-err',
+    label: 'Δ GPS',
+    unit: 'm',
+    extract: (f) => {
+      if (!f.gps) return 0
+      const dx = f.gps[0] - f.position[0]
+      const dy = f.gps[1] - f.position[1]
+      const dz = f.gps[2] - f.position[2]
+      return Math.hypot(dx, dy, dz)
+    },
+  },
+  {
+    id: 'thr-err',
+    label: 'Δ THR',
+    unit: 'N',
+    extract: (f) => {
+      if (f.thrustSensor == null) return 0
+      const truthMag = Math.hypot(f.thrustBody[0], f.thrustBody[1], f.thrustBody[2])
+      return f.thrustSensor - truthMag
+    },
+  },
+]
+
+// ============================================================================
+// Scenario colors
+// ============================================================================
+
+// ============================================================================
+// Polar (bull's-eye) chart definitions
+// ============================================================================
+
+export interface PolarChartDef {
+  id: string
+  label: string
+  /** Extract (x, y) for the polar plot. Center = (0,0). Returns null if no data. */
+  extract: (frame: FlightFrame) => [number, number] | null
+  /** Maximum meaningful radius (determines scale). */
+  maxRadius: number
+  /** Degree labels for the concentric rings. */
+  ringDegrees: number[]
+}
+
+export const POLAR_CHART_DEFS: PolarChartDef[] = [
+  {
+    id: 'attitude',
+    label: 'ATTITUDE',
+    extract: (f) => {
+      // Project nose vector (body +X rotated by quaternion) onto world XZ plane.
+      // Center = perfectly vertical (nose along +Y).
+      // Distance from center = sin(tilt angle).
+      const [w, x, y, z] = f.quatWXYZ
+      // Rotate [1,0,0] by quaternion q = (w,x,y,z):
+      const nx = 1 - 2 * (y * y + z * z)
+      const nz = 2 * (x * z - w * y)
+      return [nx, nz]
+    },
+    maxRadius: 0.5, // ~30°
+    ringDegrees: [10, 20, 30],
+  },
+  {
+    id: 'gimbal',
+    label: 'GIMBAL',
+    extract: (f) => {
+      // Thrust direction in body frame, projected onto YZ plane.
+      // Center = thrust along body +X (no gimbal deflection).
+      const mag = Math.hypot(f.thrustBody[0], f.thrustBody[1], f.thrustBody[2])
+      if (mag < 1) return null // no thrust
+      // Body Z component = yaw deflection, Body Y = pitch deflection
+      return [f.thrustBody[2] / mag, f.thrustBody[1] / mag]
+    },
+    maxRadius: 0.3, // ~17°
+    ringDegrees: [5, 10, 15],
   },
 ]
 

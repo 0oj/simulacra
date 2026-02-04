@@ -126,6 +126,92 @@ body {
   border-color: var(--text-dim);
 }
 
+/* Recent files dropdown */
+
+#recent-wrapper {
+  position: relative;
+}
+
+.dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  z-index: 50;
+  font-family: var(--font);
+}
+
+.dropdown.hidden {
+  display: none;
+}
+
+.dropdown::-webkit-scrollbar {
+  width: 4px;
+}
+
+.dropdown::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+
+.dropdown-empty {
+  padding: 12px 10px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.dropdown-item:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.dropdown-item-name {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropdown-item-meta {
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dropdown-item-del {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.dropdown-item-del:hover {
+  color: #ef4444;
+}
+
 /* ============================================================================
    Main area: 3D scene + charts
    ============================================================================ */
@@ -166,13 +252,33 @@ body {
   flex-direction: column;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#charts-container::-webkit-scrollbar {
+  width: 4px;
+}
+
+#charts-container::-webkit-scrollbar-track {
+  background: var(--bg-panel);
+}
+
+#charts-container::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
 }
 
 .chart-slot {
   flex: 1;
-  min-height: 0;
+  min-height: 80px;
   border-bottom: 1px solid var(--border);
+}
+
+.chart-slot-polar {
+  flex: 0 0 auto;
+  height: 160px;
+  min-height: 160px;
 }
 
 .chart-slot:last-child {
@@ -223,16 +329,26 @@ body {
   border-color: var(--text-dim);
 }
 
-/* Timeline slider */
+/* Timeline wrapper — holds slider + event markers */
+
+#timeline-wrapper {
+  flex: 1;
+  position: relative;
+  height: 24px;
+  display: flex;
+  align-items: center;
+}
 
 #timeline {
-  flex: 1;
+  width: 100%;
   -webkit-appearance: none;
   appearance: none;
   height: 3px;
   background: var(--border);
   outline: none;
   cursor: pointer;
+  position: relative;
+  z-index: 1;
 }
 
 #timeline::-webkit-slider-thumb {
@@ -251,6 +367,65 @@ body {
   background: var(--text-dim);
   border: none;
   cursor: pointer;
+}
+
+/* Event markers on the timeline */
+
+#event-markers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.event-marker {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--marker-color, var(--text-muted));
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0.5;
+  transition: opacity 0.15s;
+  font-family: var(--font);
+}
+
+.event-marker::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--marker-color, var(--text-muted));
+}
+
+.event-marker::after {
+  content: attr(data-label);
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+
+.event-marker:hover {
+  opacity: 1;
+}
+
+.event-marker:hover::after {
+  opacity: 1;
 }
 
 #time-readout {
@@ -273,6 +448,93 @@ body {
   min-width: 32px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+   HUD overlay — live telemetry on the 3D scene
+   ============================================================================ */
+
+#hud {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  pointer-events: none;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hud-scenario {
+  font-family: var(--font);
+  font-size: 10px;
+  background: rgba(10, 14, 26, 0.8);
+  border-left: 2px solid var(--sc-color, var(--text-dim));
+  padding: 3px 8px;
+  line-height: 1.5;
+}
+
+.hud-label {
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--sc-color, var(--text-dim));
+  font-weight: 700;
+}
+
+.hud-row {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
+}
+
+.hud-flag {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 0 3px;
+  margin-right: 4px;
+}
+
+.hud-ground {
+  color: #22c55e;
+  border: 1px solid #22c55e40;
+}
+
+.hud-tipped {
+  color: #ef4444;
+  border: 1px solid #ef444440;
+}
+
+/* ============================================================================
+   3D annotation labels (CSS2DRenderer)
+   ============================================================================ */
+
+.annotation-label {
+  font-family: var(--font);
+  font-size: 8px;
+  letter-spacing: 0.5px;
+  padding: 1px 4px;
+  border-left: 1px solid currentColor;
+  background: rgba(10, 14, 26, 0.5);
+  color: var(--text-dim);
+  opacity: 0.7;
+  white-space: nowrap;
+  user-select: none;
+  transition: opacity 0.15s;
+}
+
+.annotation-label:hover {
+  opacity: 1;
+}
+
+.annotation-impact {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 5px;
+  border-left-width: 2px;
+  opacity: 0.85;
 }
 
 /* ============================================================================

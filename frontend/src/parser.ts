@@ -20,6 +20,7 @@ function parseLine(line: string): SimMessage | null {
 export function parseNDJSON(text: string): FlightData {
   let dt = 0.02
   let rocketLength = 6.0
+  let wind: [number, number, number] | null = null
   const frames: FlightFrame[] = []
   const debugMsgs: FlightData['debugMsgs'] = []
 
@@ -38,6 +39,7 @@ export function parseNDJSON(text: string): FlightData {
 
       case 'constant':
         if (msg.rocket_length != null) rocketLength = msg.rocket_length
+        if (msg.world_wind != null) wind = [msg.world_wind.x, msg.world_wind.y, msg.world_wind.z]
         break
 
       case 'debug':
@@ -54,6 +56,11 @@ export function parseNDJSON(text: string): FlightData {
         const thr = v.thrust_vector_body ?? { x: 0, y: 0, z: 0 }
         const ang = v.angular_velocity_body ?? { x: 0, y: 0, z: 0 }
 
+        const gps = v.gps ? [v.gps.x, v.gps.y, v.gps.z] as [number, number, number] : null
+        const velSensor = v.velocity_sensor
+          ? [v.velocity_sensor.x, v.velocity_sensor.y, v.velocity_sensor.z] as [number, number, number]
+          : null
+
         frames.push({
           time: v.timestamp,
           position: [pos.x, pos.y, pos.z],
@@ -63,13 +70,21 @@ export function parseNDJSON(text: string): FlightData {
           angularVelBody: [ang.x, ang.y, ang.z],
           mass: v.rocket_mass ?? 0,
           fuelFraction: v.fuel_fraction ?? 0,
+          gps,
+          thrustSensor: v.thrust_sensor ?? null,
+          velocitySensor: velSensor,
+          onGround: v.on_ground ?? false,
+          tippedOver: v.tipped_over ?? false,
+          impactSpeed: v.impact_speed ?? null,
+          impactVerticalSpeed: v.impact_vertical_speed ?? null,
+          landingAngle: v.landing_angle ?? null,
         })
         break
       }
     }
   }
 
-  return { dt, rocketLength, frames, debugMsgs }
+  return { dt, rocketLength, wind, frames, debugMsgs }
 }
 
 /**

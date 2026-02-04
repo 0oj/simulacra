@@ -1,8 +1,9 @@
 import type { Scenario } from './types'
 import { SCENARIO_COLORS } from './types'
-import { parseNDJSON } from './parser'
+import { parseNDJSON, frameIndexAt } from './parser'
 import { SceneManager } from './scene'
 import { ChartManager } from './charts'
+import { saveFile, getFile, listRecent, deleteFile } from './store'
 
 export class App {
   private sceneManager: SceneManager
@@ -23,9 +24,10 @@ export class App {
   private speedDisplay: HTMLElement
   private scenarioList: HTMLElement
   private emptyState: HTMLElement
+  private eventMarkersEl: HTMLElement
+  private hudEl: HTMLElement
 
   constructor() {
-    // Build DOM
     document.body.innerHTML = ''
     const root = document.createElement('div')
     root.id = 'app'
@@ -34,6 +36,10 @@ export class App {
         <div id="brand">SIMULACRA</div>
         <div id="scenario-list"></div>
         <div id="header-actions">
+          <div id="recent-wrapper">
+            <button id="recent-btn">RECENT</button>
+            <div id="recent-dropdown" class="dropdown hidden"></div>
+          </div>
           <button id="load-btn">LOAD</button>
           <button id="clear-btn">CLEAR</button>
         </div>
@@ -41,6 +47,7 @@ export class App {
       <div id="main">
         <div id="scene-container">
           <div id="empty-state">DROP NDJSON FILES</div>
+          <div id="hud"></div>
         </div>
         <div id="charts-container"></div>
       </div>
@@ -49,7 +56,10 @@ export class App {
           <button id="rewind-btn" class="pb-btn" title="Rewind">⏮</button>
           <button id="play-btn" class="pb-btn" title="Play/Pause">▶</button>
         </div>
-        <input type="range" id="timeline" min="0" max="1000" value="0" />
+        <div id="timeline-wrapper">
+          <div id="event-markers"></div>
+          <input type="range" id="timeline" min="0" max="1000" value="0" />
+        </div>
         <div id="time-readout">
           <span id="time-display">T+ 000.00 / 000.00</span>
         </div>
@@ -71,12 +81,14 @@ export class App {
     this.speedDisplay = document.getElementById('speed-display')!
     this.scenarioList = document.getElementById('scenario-list')!
     this.emptyState = document.getElementById('empty-state')!
+    this.eventMarkersEl = document.getElementById('event-markers')!
+    this.hudEl = document.getElementById('hud')!
 
     // Scene and Charts
     this.sceneManager = new SceneManager(sceneContainer)
     this.chartManager = new ChartManager(chartsContainer)
 
-    // Event listeners
+    // Events
     this.setupDragDrop(root)
     this.setupControls()
     this.setupKeyboard()
@@ -102,7 +114,8 @@ export class App {
       this.clearAll()
     })
 
-    // Start animation loop
+    this.setupRecentMenu()
+
     this.lastFrameTime = performance.now()
     this.animate()
   }
@@ -131,18 +144,36 @@ export class App {
   private async loadFiles(files: FileList): Promise<void> {
     for (const file of files) {
       const text = await file.text()
-      const data = parseNDJSON(text)
-      if (data.frames.length === 0) continue
-
-      const label = file.name.replace(/\.(ndjson|jsonl)$/i, '')
-      const color = SCENARIO_COLORS[this.scenarios.length % SCENARIO_COLORS.length]
-      const scenario: Scenario = { label, color, data }
-
-      this.scenarios.push(scenario)
-      this.sceneManager.addScenario(scenario)
-      this.addScenarioChip(scenario)
+      this.loadText(file.name, text)
+      saveFile(file.name, text).catch(() => {})
     }
+    this.afterLoad()
+  }
 
+  private async loadFromStore(name: string): Promise<void> {
+    const entry = await getFile(name)
+    if (!entry) return
+    this.loadText(entry.name, entry.content)
+    // Bump savedAt timestamp
+    saveFile(entry.name, entry.content).catch(() => {})
+    this.afterLoad()
+  }
+
+  private loadText(filename: string, text: string): void {
+    const data = parseNDJSON(text)
+    if (data.frames.length === 0) return
+
+    const label = filename.replace(/\.(ndjson|jsonl)$/i, '')
+    const color =
+      SCENARIO_COLORS[this.scenarios.length % SCENARIO_COLORS.length]
+    const scenario: Scenario = { label, color, data }
+
+    this.scenarios.push(scenario)
+    this.sceneManager.addScenario(scenario)
+    this.addScenarioChip(scenario)
+  }
+
+  private afterLoad(): void {
     if (this.scenarios.length > 0) {
       this.maxTime = Math.max(
         ...this.scenarios.map((s) => {
@@ -155,6 +186,7 @@ export class App {
       this.playBtn.textContent = '⏸'
       this.emptyState.style.display = 'none'
       this.sceneManager.frameFit(this.scenarios)
+      this.buildEventMarkers()
     }
   }
 
@@ -165,16 +197,112 @@ export class App {
     this.scenarioList.appendChild(chip)
   }
 
+  private buildEventMarkers(): void {
+    this.eventMarkersEl.innerHTML = ''
+    for (const s of this.scenarios) {
+      for (const dm of s.data.debugMsgs) {
+        if (this.maxTime <= 0) continue
+        const pct = (dm.time / this.maxTime) * 100
+
+        const marker = document.createElement('button')
+        marker.className = 'event-marker'
+        marker.style.left = pct + '%'
+        marker.style.setProperty('--marker-color', s.color)
+        marker.setAttribute('data-label', dm.text)
+        marker.title = `${dm.text} — T+${dm.time.toFixed(2)}s`
+
+        marker.addEventListener('click', (e) => {
+          e.stopPropagation()
+          this.currentTime = dm.time
+          this.playing = false
+          this.playBtn.textContent = '▶'
+          this.lastFrameTime = performance.now()
+        })
+
+        this.eventMarkersEl.appendChild(marker)
+      }
+    }
+  }
+
   private clearAll(): void {
     this.scenarios = []
     this.sceneManager.clearAll()
     this.scenarioList.innerHTML = ''
+    this.eventMarkersEl.innerHTML = ''
     this.playing = false
     this.currentTime = 0
     this.maxTime = 0
     this.playBtn.textContent = '▶'
     this.emptyState.style.display = ''
     this.chartManager.draw([], 0, 0)
+    this.hudEl.innerHTML = ''
+  }
+
+  // ===========================================================================
+  // Recent files
+  // ===========================================================================
+
+  private setupRecentMenu(): void {
+    const btn = document.getElementById('recent-btn')!
+    const dropdown = document.getElementById('recent-dropdown')!
+
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      if (!dropdown.classList.contains('hidden')) {
+        dropdown.classList.add('hidden')
+        return
+      }
+
+      const entries = await listRecent()
+      dropdown.innerHTML = ''
+
+      if (entries.length === 0) {
+        dropdown.innerHTML = '<div class="dropdown-empty">NO SAVED FILES</div>'
+      } else {
+        for (const entry of entries) {
+          const item = document.createElement('div')
+          item.className = 'dropdown-item'
+
+          const label = document.createElement('span')
+          label.className = 'dropdown-item-name'
+          label.textContent = entry.name.replace(/\.(ndjson|jsonl)$/i, '')
+
+          const meta = document.createElement('span')
+          meta.className = 'dropdown-item-meta'
+          meta.textContent = fmtSize(entry.size)
+
+          const del = document.createElement('button')
+          del.className = 'dropdown-item-del'
+          del.textContent = '×'
+          del.title = 'Remove from recent'
+          del.addEventListener('click', async (ev) => {
+            ev.stopPropagation()
+            await deleteFile(entry.name)
+            item.remove()
+            if (dropdown.children.length === 0) {
+              dropdown.innerHTML = '<div class="dropdown-empty">NO SAVED FILES</div>'
+            }
+          })
+
+          item.appendChild(label)
+          item.appendChild(meta)
+          item.appendChild(del)
+          item.addEventListener('click', () => {
+            dropdown.classList.add('hidden')
+            this.loadFromStore(entry.name)
+          })
+          dropdown.appendChild(item)
+        }
+      }
+
+      dropdown.classList.remove('hidden')
+    })
+
+    // Close dropdown on outside click
+    document.addEventListener('click', () => {
+      dropdown.classList.add('hidden')
+    })
+    dropdown.addEventListener('click', (e) => e.stopPropagation())
   }
 
   // ===========================================================================
@@ -240,40 +368,90 @@ export class App {
     const wallDt = (now - this.lastFrameTime) / 1000
     this.lastFrameTime = now
 
-    // Advance playback
     if (this.playing && this.maxTime > 0) {
       this.currentTime += wallDt * this.speed
       if (this.currentTime > this.maxTime) {
-        this.currentTime = 0 // loop
+        this.currentTime = 0
       }
     }
 
-    // Update timeline slider
     if (this.maxTime > 0) {
       this.timeline.value = String(
         Math.round((this.currentTime / this.maxTime) * 1000),
       )
     }
 
-    // Update time display
     this.timeDisplay.textContent = `T+ ${pad(this.currentTime)} / ${pad(this.maxTime)}`
 
-    // Update 3D scene (every frame)
+    // 3D scene (every frame)
     this.sceneManager.update(this.scenarios, this.currentTime)
 
-    // Update charts (throttled to ~15fps for performance)
+    // Charts + HUD (throttled ~15fps)
     this.chartThrottle += wallDt
     if (this.chartThrottle > 0.066) {
       this.chartThrottle = 0
       this.chartManager.draw(this.scenarios, this.currentTime, this.maxTime)
+      this.updateHUD()
     }
+  }
+
+  private updateHUD(): void {
+    if (this.scenarios.length === 0) {
+      this.hudEl.innerHTML = ''
+      return
+    }
+
+    let html = ''
+    for (const s of this.scenarios) {
+      const idx = frameIndexAt(s.data.frames, this.currentTime)
+      if (idx < 0) continue
+      const f = s.data.frames[idx]
+
+      const alt = f.position[1].toFixed(1)
+      const spd = Math.hypot(f.velocity[0], f.velocity[1], f.velocity[2]).toFixed(1)
+      const fuel = (f.fuelFraction * 100).toFixed(0)
+      const thr = Math.hypot(f.thrustBody[0], f.thrustBody[1], f.thrustBody[2]).toFixed(0)
+
+      // Wind readout
+      let windLine = ''
+      const w = s.data.wind
+      if (w) {
+        const wmag = Math.hypot(w[0], w[1], w[2])
+        if (wmag > 0.01) {
+          // Find dominant axis
+          const abs = [Math.abs(w[0]), Math.abs(w[1]), Math.abs(w[2])]
+          const labels = ['X', 'Y', 'Z']
+          const signs = [w[0], w[1], w[2]]
+          let maxI = 0
+          if (abs[1] > abs[maxI]) maxI = 1
+          if (abs[2] > abs[maxI]) maxI = 2
+          const dir = (signs[maxI] >= 0 ? '+' : '\u2212') + labels[maxI]
+          windLine = `<div class="hud-row">WIND ${wmag.toFixed(1)}N \u2192 ${dir}</div>`
+        }
+      }
+
+      const flags: string[] = []
+      if (f.onGround) flags.push('<span class="hud-flag hud-ground">GND</span>')
+      if (f.tippedOver) flags.push('<span class="hud-flag hud-tipped">TIP</span>')
+
+      html += `<div class="hud-scenario" style="--sc-color:${s.color}">
+        <div class="hud-label">${s.label}</div>
+        <div class="hud-row">ALT ${alt}m  V ${spd}m/s</div>
+        <div class="hud-row">THR ${thr}N  FUEL ${fuel}%</div>
+        ${windLine}
+        ${flags.length > 0 ? `<div class="hud-row">${flags.join(' ')}</div>` : ''}
+      </div>`
+    }
+    this.hudEl.innerHTML = html
   }
 }
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
 function pad(t: number): string {
   return t.toFixed(2).padStart(7, '0')
+}
+
+function fmtSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }

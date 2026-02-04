@@ -61,6 +61,52 @@ Controller reads sensors → issues actuator commands → actuators modify rocke
 - **Be explicit about approximations**: document toy models vs. realistic ones.
 - **Concept → code → test → visualization**: write the math down, implement minimally, test it, plot it.
 
+## UI Design Principles
+
+Design interfaces as precise, didactic technical diagrams rather than decorative UI.
+
+### Core axioms
+
+- **Purpose**: help a human understand a system. Every component justifies itself in clarity gained per pixel spent.
+- **Cognitive stance**: precision instrument with a teacher's restraint. No hype, no dramatization. Expose ambiguity rather than hiding it.
+- **Audience**: curious, technically literate reader — a strong undergrad or an engineer outside their domain. Labels are explicit but sparse.
+
+### Geometry and layout
+
+- All elements align to explicit or implicit grids (Cartesian by default). "Almost aligned" is a bug.
+- Use precise vector primitives: lines, circles, rectangles, arcs, splines.
+- Favor exploded views, layers, construction lines, anchors, and ticks.
+- Nothing is arbitrarily placed.
+
+### Color
+
+- Limited semantic palette (2-4 colors total). Color encodes role or state, never decoration.
+- **One saturated color per screen by default.** Violating this should feel wrong.
+- Dark mode is canonical for this project. No glow, no neon. Contrast comes from value, not saturation.
+
+### Typography
+
+- Text is **subordinate to geometry**. Labels attach to objects; explanations live at margins.
+- Neutral, technical, and unobtrusive. Mathematical typesetting / engineering documentation feel.
+- Numbers are exact when known, approximate when estimated, symbolic when explanatory. Units are mandatory when ambiguity exists.
+
+### Motion and interaction
+
+- Motion exists only to explain change or causality. No decorative animation.
+- Fast, consistent, and restrained. Same action = same duration.
+- Three modes: View (observe), Inspect (probe/hover/reveal), Manipulate (change parameters). Modes must be obvious.
+
+### Avoid
+
+- Cyberpunk or neon aesthetics, glassmorphism, skeuomorphism
+- Decorative gradients, textures, or expressive fonts
+- Trend-driven UI patterns
+- Over-smoothing or hiding uncertainty
+
+### Target aesthetic
+
+Timeless, slightly archival. Should feel like a future technical manual or a very good one from 1975.
+
 ## Dependencies
 
 - **Backend**: Python >=3.13, numpy, scipy, matplotlib, pydantic

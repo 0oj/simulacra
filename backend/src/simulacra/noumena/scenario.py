@@ -57,6 +57,7 @@ class Scenario:
 
     _time: float = 0.0
     _events: list[Event] = []
+    _last_constant: Optional[ConstantMessage] = None
 
     def __init__(
         self,
@@ -92,6 +93,7 @@ class Scenario:
         self.controller.run()
         self.kernel.step(self.dt)
         self._exec_due_events()
+        self._write_constant_if_changed()
         self.callback(self._time, self.kernel, self.controller)
         self._write_variable_message()
         self._time += self.dt
@@ -110,6 +112,23 @@ class Scenario:
             env=self.kernel.environment,
         )
         write_message(message)
+        self._last_constant = message
+
+    def _write_constant_if_changed(self) -> None:
+        """Re-emit a constant message if configuration changed (e.g. after an event)."""
+        message = collect(
+            ConstantMessage, self._time,
+            props=self.kernel.rocket.props,
+            env=self.kernel.environment,
+        )
+        # Compare all fields except timestamp
+        if self._last_constant is not None:
+            last = self._last_constant.model_dump(exclude={"timestamp", "message_type"})
+            curr = message.model_dump(exclude={"timestamp", "message_type"})
+            if last == curr:
+                return
+        write_message(message)
+        self._last_constant = message
 
     def _write_variable_message(self) -> None:
         message = collect(
