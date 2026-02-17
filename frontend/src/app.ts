@@ -36,6 +36,10 @@ export class App {
         <div id="brand">SIMULACRA</div>
         <div id="scenario-list"></div>
         <div id="header-actions">
+          <div id="browse-wrapper">
+            <button id="browse-btn">BROWSE</button>
+            <div id="browse-dropdown" class="dropdown hidden"></div>
+          </div>
           <div id="recent-wrapper">
             <button id="recent-btn">RECENT</button>
             <div id="recent-dropdown" class="dropdown hidden"></div>
@@ -114,10 +118,52 @@ export class App {
       this.clearAll()
     })
 
+    this.setupBrowseMenu()
     this.setupRecentMenu()
 
     this.lastFrameTime = performance.now()
     this.animate()
+
+    // Check for URL parameters to preload files
+    this.loadFromURLParams()
+  }
+
+  // ===========================================================================
+  // URL parameter loading
+  // ===========================================================================
+
+  private async loadFromURLParams(): Promise<void> {
+    const params = new URLSearchParams(window.location.search)
+    const files = params.getAll('file')
+
+    if (files.length === 0) return
+
+    for (const file of files) {
+      try {
+        // Try /output/ path first (proxied to output directory)
+        let url = `/output/${file}`
+        let response = await fetch(url)
+
+        // If not found in output dir, try as absolute path via /@fs/
+        if (!response.ok && file.startsWith('/')) {
+          url = `/@fs${file}`
+          response = await fetch(url)
+        }
+
+        if (!response.ok) {
+          console.warn(`Failed to load ${file}: ${response.status}`)
+          continue
+        }
+
+        const text = await response.text()
+        const filename = file.split('/').pop() || file
+        this.loadText(filename, text)
+      } catch (err) {
+        console.warn(`Failed to load ${file}:`, err)
+      }
+    }
+
+    this.afterLoad()
   }
 
   // ===========================================================================
@@ -236,6 +282,117 @@ export class App {
     this.emptyState.style.display = ''
     this.chartManager.draw([], 0, 0)
     this.hudEl.innerHTML = ''
+  }
+
+  // ===========================================================================
+  // Browse files (from output directory)
+  // ===========================================================================
+
+  private setupBrowseMenu(): void {
+    const btn = document.getElementById('browse-btn')!
+    const dropdown = document.getElementById('browse-dropdown')!
+
+    // Track selected files for multi-select
+    const selected = new Set<string>()
+
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation()
+      if (!dropdown.classList.contains('hidden')) {
+        dropdown.classList.add('hidden')
+        return
+      }
+
+      // Fetch available files from API
+      dropdown.innerHTML = '<div class="dropdown-loading">Loading...</div>'
+      dropdown.classList.remove('hidden')
+
+      try {
+        const response = await fetch('/api/files')
+        const data = await response.json()
+
+        dropdown.innerHTML = ''
+        selected.clear()
+
+        if (!data.files || data.files.length === 0) {
+          dropdown.innerHTML = '<div class="dropdown-empty">NO FILES IN OUTPUT DIR</div>'
+          return
+        }
+
+        // Load selected button
+        const loadBtn = document.createElement('button')
+        loadBtn.className = 'dropdown-load-btn hidden'
+        loadBtn.textContent = 'LOAD SELECTED (0)'
+        loadBtn.addEventListener('click', async (ev) => {
+          ev.stopPropagation()
+          dropdown.classList.add('hidden')
+          for (const name of selected) {
+            await this.loadFromOutput(name)
+          }
+          this.afterLoad()
+        })
+        dropdown.appendChild(loadBtn)
+
+        // File list
+        for (const file of data.files) {
+          const item = document.createElement('div')
+          item.className = 'dropdown-item browse-item'
+
+          const checkbox = document.createElement('input')
+          checkbox.type = 'checkbox'
+          checkbox.className = 'browse-checkbox'
+          checkbox.addEventListener('change', () => {
+            if (checkbox.checked) {
+              selected.add(file.name)
+            } else {
+              selected.delete(file.name)
+            }
+            loadBtn.textContent = `LOAD SELECTED (${selected.size})`
+            loadBtn.classList.toggle('hidden', selected.size === 0)
+          })
+
+          const label = document.createElement('span')
+          label.className = 'dropdown-item-name'
+          label.textContent = file.name.replace(/\.(ndjson|jsonl)$/i, '')
+
+          const meta = document.createElement('span')
+          meta.className = 'dropdown-item-meta'
+          meta.textContent = fmtSize(file.size)
+
+          item.appendChild(checkbox)
+          item.appendChild(label)
+          item.appendChild(meta)
+
+          // Single click on label loads immediately
+          label.addEventListener('click', async (ev) => {
+            ev.stopPropagation()
+            dropdown.classList.add('hidden')
+            await this.loadFromOutput(file.name)
+            this.afterLoad()
+          })
+
+          dropdown.appendChild(item)
+        }
+      } catch (err) {
+        dropdown.innerHTML = `<div class="dropdown-empty">ERROR: ${err}</div>`
+      }
+    })
+
+    // Close dropdown on outside click
+    document.addEventListener('click', () => {
+      dropdown.classList.add('hidden')
+    })
+    dropdown.addEventListener('click', (e) => e.stopPropagation())
+  }
+
+  private async loadFromOutput(name: string): Promise<void> {
+    try {
+      const response = await fetch(`/output/${name}`)
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const text = await response.text()
+      this.loadText(name, text)
+    } catch (err) {
+      console.error(`Failed to load ${name}:`, err)
+    }
   }
 
   // ===========================================================================
@@ -409,7 +566,7 @@ export class App {
 
       const alt = f.position[1].toFixed(1)
       const spd = Math.hypot(f.velocity[0], f.velocity[1], f.velocity[2]).toFixed(1)
-      const fuel = (f.fuelFraction * 100).toFixed(0)
+      const fuel = f.fuelFraction != null ? (f.fuelFraction * 100).toFixed(0) + '%' : null
       const thr = Math.hypot(f.thrustBody[0], f.thrustBody[1], f.thrustBody[2]).toFixed(0)
 
       // Wind readout
@@ -437,7 +594,7 @@ export class App {
       html += `<div class="hud-scenario" style="--sc-color:${s.color}">
         <div class="hud-label">${s.label}</div>
         <div class="hud-row">ALT ${alt}m  V ${spd}m/s</div>
-        <div class="hud-row">THR ${thr}N  FUEL ${fuel}%</div>
+        <div class="hud-row">THR ${thr}N${fuel ? `  FUEL ${fuel}` : ''}</div>
         ${windLine}
         ${flags.length > 0 ? `<div class="hud-row">${flags.join(' ')}</div>` : ''}
       </div>`

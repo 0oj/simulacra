@@ -6,7 +6,7 @@ capturing both the true state and what the rocket perceived.
 import json
 import sys
 from dataclasses import dataclass
-from typing import Annotated, Any, Callable, Optional, Union, Literal, Tuple
+from typing import Annotated, Any, Callable, Optional, Union, Literal, Tuple, TextIO
 
 from .physics.vec3 import RocketVec3, WorldVec3
 
@@ -32,8 +32,8 @@ class Source:
 def State(attr: str, transform: str | None = None):
     return Source("state", attr, transform)
 
-def Sensor(attr: str):
-    return Source("sensors", attr)
+def Sensor(attr: str, transform: str | None = None):
+    return Source("sensors", attr, transform)
 
 def Props(attr: str):
     return Source("props", attr)
@@ -47,12 +47,15 @@ def Model(attr: str):
 def Ground(attr: str):
     return Source("ground", attr)
 
+def Actuator(attr: str):
+    return Source("actuators", attr)
+
 
 TRANSFORMS: dict[str, Callable[[Any], Any]] = {
     "orientation_to_quat": lambda o: tuple(o.as_array()),
 }
 
-SCHEMA_VERSION = "0.2.0"
+SCHEMA_VERSION = "0.3.0"
 
 
 class MessageType(str, Enum):
@@ -203,6 +206,30 @@ class VariableMessage(BaseMessage):
         description="Velocity sensor reading (m/s) in the world frame.",
     )
 
+    # Sensor readings (phenomena) - IMU (orientation + gyro)
+    orientation_sensor: Annotated[Optional[Tuple[float, float, float, float]], Sensor("OrientationSensor", transform="orientation_to_quat")] = Field(
+        default=None,
+        description="Orientation sensor reading as quaternion (w, x, y, z).",
+    )
+    gyro_sensor: Annotated[Optional[RocketVec3], Sensor("GyroSensor")] = Field(
+        default=None,
+        description="Gyroscope sensor reading (rad/s) in body frame.",
+    )
+
+    # Actuator state (phenomena)
+    gimbal_outer_angle: Annotated[Optional[float], Actuator("gimbal_outer_angle")] = Field(
+        default=None,
+        description="Outer gimbal angle (radians), rotation about body +Z.",
+    )
+    gimbal_inner_angle: Annotated[Optional[float], Actuator("gimbal_inner_angle")] = Field(
+        default=None,
+        description="Inner gimbal angle (radians), rotation about gimbal +Y.",
+    )
+    throttle_command: Annotated[Optional[float], Actuator("throttle_command")] = Field(
+        default=None,
+        description="Commanded throttle (Newtons).",
+    )
+
     # Ground contact / landing metrics
     on_ground: Annotated[Optional[bool], Ground("on_ground")] = Field(
         default=None,
@@ -256,15 +283,24 @@ def collect(message_cls: type[BaseMessage], timestamp: float, **roots: Any) -> B
     """
     Build a message by reading source annotations from the model's fields.
 
-    roots: named objects to resolve against (state=..., sensors=..., props=..., env=..., model=...)
+    roots: named objects to resolve against (state=..., sensors=..., props=..., env=..., model=..., actuators=...)
+           If a root is not provided, fields that depend on it are skipped.
     """
     data: dict[str, Any] = {"timestamp": timestamp}
     for field_name, field_info in message_cls.model_fields.items():
         source = _get_source(field_info)
         if source is None:
             continue
+        # Skip if the root object isn't provided
+        if source.kind not in roots:
+            continue
         root_obj = roots[source.kind]
+        if root_obj is None:
+            continue
         value = getattr(root_obj, source.attr)
+        # Skip if the value is None (optional actuator fields, etc.)
+        if value is None:
+            continue
         if source.kind == "sensors":
             value = value.read()
         if source.transform:
@@ -285,18 +321,20 @@ SimMessage = Union[ConstantMessage, VariableMessage, MetadataMessage, DebugMessa
 # ============================================================================
 
 
-def write_message(message: SimMessage) -> None:
+def write_message(message: SimMessage, output: TextIO | None = None) -> None:
     """
-    Write a simulation message as a JSON line (NDJSON format) to stdout.
+    Write a simulation message as a JSON line (NDJSON format).
     Uses exclude_none=True to ensure no null values appear in the JSON.
 
     Args:
         message: Any SimMessage type.
+        output: File-like object to write to. Defaults to stdout.
     """
+    out = output if output is not None else sys.stdout
     try:
         json_str = message.model_dump_json(exclude_none=True)
-        sys.stdout.write(json_str + "\n")
-        sys.stdout.flush()
+        out.write(json_str + "\n")
+        out.flush()
     except BrokenPipeError:
         sys.exit(0)
 

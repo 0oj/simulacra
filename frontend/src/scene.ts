@@ -179,6 +179,8 @@ export class SceneManager {
       color: 0xd4d4d8,
       emissive: hexColor,
       emissiveIntensity: 0.15,
+      transparent: true,
+      opacity: 0.7,
     })
     const body = new THREE.Mesh(bodyGeo, bodyMat)
     group.add(body)
@@ -187,7 +189,11 @@ export class SceneManager {
     const noseHeight = rocketLen * 0.2
     const noseGeo = new THREE.ConeGeometry(bodyRadius, noseHeight, 12)
     noseGeo.translate(0, bodyHeight + noseHeight / 2, 0)
-    const noseMat = new THREE.MeshPhongMaterial({ color: hexColor })
+    const noseMat = new THREE.MeshPhongMaterial({
+      color: hexColor,
+      transparent: true,
+      opacity: 0.7,
+    })
     const nose = new THREE.Mesh(noseGeo, noseMat)
     group.add(nose)
 

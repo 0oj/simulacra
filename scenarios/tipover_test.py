@@ -25,6 +25,7 @@ from simulacra.noumena import (
     get_upright_orientation,
 )
 from simulacra.onboard.controller import IdentityController
+from simulacra.phenomena.sensors import Sensors
 from simulacra.physics import RocketVec3, WorldVec3
 from simulacra.physics.quat import Orientation
 from simulacra.schema import DebugMessage, write_message
@@ -68,8 +69,9 @@ environment = Environment(
 
 rocket = make_rocket()
 kernel = Kernel(rocket=rocket, environment=environment)
+sensors = Sensors(kernel)
 controller = IdentityController()
-scenario = Scenario(kernel=kernel, controller=controller)
+scenario = Scenario(kernel=kernel, controller=controller, sensors=sensors)
 
 
 def announce(text: str):

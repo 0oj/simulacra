@@ -42,6 +42,7 @@ def test_gimbal_actuator_3d_zero_angles_points_along_body_x() -> None:
     )
 
     actuator.apply(GimbalCommand(0.0, 0.0))
+    actuator.step(0.01)  # Advance dynamics to apply commanded angles
 
     thrust = rocket.state.thrust_body
     np.testing.assert_allclose(
@@ -62,6 +63,7 @@ def test_gimbal_actuator_3d_outer_yaw_only() -> None:
     )
 
     actuator.apply(GimbalCommand(np.pi / 2.0, 0.0))
+    actuator.step(0.01)  # Advance dynamics to apply commanded angles
 
     thrust = rocket.state.thrust_body
     np.testing.assert_allclose(
@@ -85,6 +87,7 @@ def test_gimbal_actuator_3d_nested_pitch_after_yaw() -> None:
     yaw = np.deg2rad(30.0)
     pitch = np.deg2rad(20.0)
     actuator.apply(GimbalCommand(yaw, pitch))
+    actuator.step(0.01)  # Advance dynamics to apply commanded angles
 
     thrust = rocket.state.thrust_body
     # Magnitude should be preserved by the actuator.

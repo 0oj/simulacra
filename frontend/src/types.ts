@@ -41,6 +41,14 @@ export interface VariableMessage {
   gps?: Vec3
   thrust_sensor?: number
   velocity_sensor?: Vec3
+  // IMU sensor readings
+  orientation_sensor?: [number, number, number, number] // w, x, y, z
+  gyro_sensor?: Vec3
+  // Actuator state
+  gimbal_outer_angle?: number
+  gimbal_inner_angle?: number
+  throttle_command?: number
+  // Ground contact
   on_ground?: boolean
   tipped_over?: boolean
   impact_speed?: number
@@ -72,12 +80,19 @@ export interface FlightFrame {
   thrustBody: [number, number, number]
   angularVelBody: [number, number, number]
   mass: number
-  fuelFraction: number
+  fuelFraction: number | null
 
   // Sensor readings (phenomena)
   gps: [number, number, number] | null
   thrustSensor: number | null
   velocitySensor: [number, number, number] | null
+  orientationSensor: [number, number, number, number] | null
+  gyroSensor: [number, number, number] | null
+
+  // Actuator state (phenomena)
+  gimbalOuterAngle: number | null
+  gimbalInnerAngle: number | null
+  throttleCommand: number | null
 
   // Ground contact
   onGround: boolean
@@ -166,7 +181,7 @@ export const CHART_DEFS: ChartDef[] = [
     id: 'fuel',
     label: 'FUEL',
     unit: '%',
-    extract: (f) => f.fuelFraction * 100,
+    extract: (f) => (f.fuelFraction != null ? f.fuelFraction * 100 : NaN),
   },
   {
     id: 'gps-err',
@@ -189,6 +204,35 @@ export const CHART_DEFS: ChartDef[] = [
       const truthMag = Math.hypot(f.thrustBody[0], f.thrustBody[1], f.thrustBody[2])
       return f.thrustSensor - truthMag
     },
+  },
+  {
+    id: 'ctrl-thr',
+    label: 'CTRL',
+    unit: 'N',
+    extract: (f) => {
+      const actual = Math.hypot(f.thrustBody[0], f.thrustBody[1], f.thrustBody[2])
+      const cmd = f.throttleCommand ?? actual
+      return [cmd, actual]
+    },
+    componentLabels: ['CMD', 'ACT'],
+  },
+  {
+    id: 'omega-mag',
+    label: '|ω|',
+    unit: 'rad/s',
+    extract: (f) =>
+      Math.hypot(f.angularVelBody[0], f.angularVelBody[1], f.angularVelBody[2]),
+  },
+  {
+    id: 'gimbal',
+    label: 'GIMBAL',
+    unit: '°',
+    extract: (f) => {
+      const outer = f.gimbalOuterAngle != null ? (f.gimbalOuterAngle * 180) / Math.PI : 0
+      const inner = f.gimbalInnerAngle != null ? (f.gimbalInnerAngle * 180) / Math.PI : 0
+      return [outer, inner]
+    },
+    componentLabels: ['YAW', 'PITCH'],
   },
 ]
 

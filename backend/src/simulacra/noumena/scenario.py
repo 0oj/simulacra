@@ -5,10 +5,11 @@ advancing physics, and recording the truth for later inspection.
 
 import heapq
 from itertools import count
-from typing import Callable, Optional
+from typing import Callable, Optional, TextIO
 
 from ..noumena import Kernel
 from ..onboard.controller import Controller
+from ..phenomena.actuators import Actuators
 from ..phenomena.sensors import Sensors
 from ..schema import ConstantMessage, MetadataMessage, VariableMessage, collect, write_message
 
@@ -55,22 +56,27 @@ class Scenario:
     truth for later inspection.
     """
 
-    _time: float = 0.0
-    _events: list[Event] = []
-    _last_constant: Optional[ConstantMessage] = None
-
     def __init__(
         self,
         kernel: Kernel,
         controller: Controller,
         callback: Optional[Callback] = default_callback,
         dt: float = 0.01,
+        sensors: Optional[Sensors] = None,
+        actuators: Optional[Actuators] = None,
     ):
         self.kernel = kernel
-        self.sensors = Sensors(self.kernel)
+        self.sensors = sensors if sensors is not None else Sensors(self.kernel)
+        self.actuators = actuators
         self.controller = controller.with_sensors(self.sensors)
         self.callback = callback
         self.dt = dt
+
+        # Instance-level state (not class-level to avoid sharing across instances)
+        self._time: float = 0.0
+        self._events: list[Event] = []
+        self._last_constant: Optional[ConstantMessage] = None
+        self._output: Optional[TextIO] = None
 
     def add_event(self, at_time: float, callback: Callback) -> None:
         """
@@ -90,7 +96,11 @@ class Scenario:
             event.callback(self._time, self.kernel, self.controller)
 
     def step(self) -> None:
+        self.sensors.set_time(self._time)
         self.controller.run()
+        if self.actuators is not None:
+            self.actuators.set_time(self._time)
+            self.actuators.step(self.dt)
         self.kernel.step(self.dt)
         self._exec_due_events()
         self._write_constant_if_changed()
@@ -103,7 +113,7 @@ class Scenario:
             dt=self.dt,
             duration=duration,
         )
-        write_message(message)
+        write_message(message, self._output)
 
     def _write_constant_message(self) -> None:
         message = collect(
@@ -111,7 +121,7 @@ class Scenario:
             props=self.kernel.rocket.props,
             env=self.kernel.environment,
         )
-        write_message(message)
+        write_message(message, self._output)
         self._last_constant = message
 
     def _write_constant_if_changed(self) -> None:
@@ -127,7 +137,7 @@ class Scenario:
             curr = message.model_dump(exclude={"timestamp", "message_type"})
             if last == curr:
                 return
-        write_message(message)
+        write_message(message, self._output)
         self._last_constant = message
 
     def _write_variable_message(self) -> None:
@@ -138,13 +148,19 @@ class Scenario:
             props=self.kernel.rocket.props,
             model=self.kernel.rocket.mass_model,
             ground=self.kernel.ground_contact,
+            actuators=self.actuators,
         )
-        write_message(message)
+        write_message(message, self._output)
 
-    def run(self, duration: float) -> None:
+    def run(self, duration: float, output: Optional[TextIO] = None) -> None:
         """
         Run the scenario for the given duration.
+
+        Args:
+            duration: How long to run the simulation (seconds).
+            output: File-like object to write NDJSON to. Defaults to stdout.
         """
+        self._output = output
         self._write_metadata_message(duration)
         self._write_constant_message()
         while self._time < duration:

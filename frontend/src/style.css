@@ -126,8 +126,9 @@ body {
   border-color: var(--text-dim);
 }
 
-/* Recent files dropdown */
+/* File browser and recent files dropdowns */
 
+#browse-wrapper,
 #recent-wrapper {
   position: relative;
 }
@@ -210,6 +211,58 @@ body {
 
 .dropdown-item-del:hover {
   color: #ef4444;
+}
+
+.dropdown-loading {
+  padding: 12px 10px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* Browse menu specific */
+
+.browse-item {
+  padding-left: 6px;
+}
+
+.browse-checkbox {
+  width: 12px;
+  height: 12px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.browse-item .dropdown-item-name {
+  cursor: pointer;
+}
+
+.browse-item .dropdown-item-name:hover {
+  color: var(--accent);
+}
+
+.dropdown-load-btn {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--accent);
+  border: none;
+  color: white;
+  font-family: var(--font);
+  font-size: 9px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.dropdown-load-btn:hover {
+  background: #2563eb;
+}
+
+.dropdown-load-btn.hidden {
+  display: none;
 }
 
 /* ============================================================================

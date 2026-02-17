@@ -16,6 +16,11 @@ dependencies = [
 [tool.hatchling.build.targets.wheel]
 packages = ["src/simulacra"]
 
+[project.optional-dependencies]
+rl = [
+    "gymnasium>=1.0.0",
+]
+
 [dependency-groups]
 dev = [
     "ipykernel>=7.1.0",

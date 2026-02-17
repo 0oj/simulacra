@@ -128,11 +128,11 @@ class MassModel:
         )
 
     @property
-    def fuel_fraction(self) -> float:
-        """Current fuel level as a fraction 0..1."""
+    def fuel_fraction(self) -> float | None:
+        """Current fuel level as a fraction 0..1, or None if no fuel system."""
         cap = self.fuel_capacity
         if cap == 0.0:
-            return 0.0
+            return None
         return self.fuel_mass / cap
 
     def to_rocket_props(

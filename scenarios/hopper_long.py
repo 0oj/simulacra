@@ -37,7 +37,8 @@ from simulacra.noumena import (
     get_upright_orientation,
 )
 from simulacra.onboard.controller import Controller, IdentityController
-from simulacra.phenomena.actuators import ThrottleActuator, ThrottleCommand
+from simulacra.phenomena.actuators import ThrottleActuator, ThrottleCommand, Actuators
+from simulacra.phenomena.sensors import Sensors
 from simulacra.physics import RocketVec3, WorldVec3
 from simulacra.schema import DebugMessage, write_message
 
@@ -105,9 +106,11 @@ rocket = make_rocket()
 MASS = rocket.props.mass  # 180 kg at launch
 
 kernel = Kernel(rocket=rocket, environment=environment)
-controller = IdentityController()
-scenario = Scenario(kernel=kernel, controller=controller)
+sensors = Sensors(kernel)
 throttle = ThrottleActuator(rocket)
+actuators = Actuators(throttle=throttle)
+controller = IdentityController()
+scenario = Scenario(kernel=kernel, controller=controller, sensors=sensors, actuators=actuators)
 
 
 # ── Event helpers ─────────────────────────────────────────────────────────────

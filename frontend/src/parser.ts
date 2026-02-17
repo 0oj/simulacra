@@ -60,6 +60,12 @@ export function parseNDJSON(text: string): FlightData {
         const velSensor = v.velocity_sensor
           ? [v.velocity_sensor.x, v.velocity_sensor.y, v.velocity_sensor.z] as [number, number, number]
           : null
+        const orientationSensor = v.orientation_sensor
+          ? [v.orientation_sensor[0], v.orientation_sensor[1], v.orientation_sensor[2], v.orientation_sensor[3]] as [number, number, number, number]
+          : null
+        const gyroSensor = v.gyro_sensor
+          ? [v.gyro_sensor.x, v.gyro_sensor.y, v.gyro_sensor.z] as [number, number, number]
+          : null
 
         frames.push({
           time: v.timestamp,
@@ -69,10 +75,15 @@ export function parseNDJSON(text: string): FlightData {
           thrustBody: [thr.x, thr.y, thr.z],
           angularVelBody: [ang.x, ang.y, ang.z],
           mass: v.rocket_mass ?? 0,
-          fuelFraction: v.fuel_fraction ?? 0,
+          fuelFraction: v.fuel_fraction ?? null,
           gps,
           thrustSensor: v.thrust_sensor ?? null,
           velocitySensor: velSensor,
+          orientationSensor,
+          gyroSensor,
+          gimbalOuterAngle: v.gimbal_outer_angle ?? null,
+          gimbalInnerAngle: v.gimbal_inner_angle ?? null,
+          throttleCommand: v.throttle_command ?? null,
           onGround: v.on_ground ?? false,
           tippedOver: v.tipped_over ?? false,
           impactSpeed: v.impact_speed ?? null,
