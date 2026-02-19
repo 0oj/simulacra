@@ -64,8 +64,28 @@ def inertia_diag(
         Iy += m * (dx**2 + dz**2)
         Iz += m * (dx**2 + dy**2)
 
-    # Floor roll inertia to avoid singularity
-    min_Ix = min_ix_fraction * (Iy + Iz) / 2.0
-    Ix = max(Ix, min_Ix)
+    # Floor all inertias to avoid singularity
+    # When only one point mass exists or all masses are at the same position,
+    # some inertias can be zero. We floor to a fraction of total mass * length²
+    total_m = sum(masses)
+    if total_m > 0:
+        # Estimate a characteristic length from the mass distribution
+        max_dist_sq = 0.0
+        for pos in positions:
+            dx = pos[0] - com[0]
+            dy = pos[1] - com[1]
+            dz = pos[2] - com[2]
+            dist_sq = dx**2 + dy**2 + dz**2
+            max_dist_sq = max(max_dist_sq, dist_sq)
+
+        # Minimum inertia: treat as thin rod of length max_dist
+        # I = (1/12) * m * L² for a rod
+        min_inertia = min_ix_fraction * total_m * max(1.0, max_dist_sq)
+    else:
+        min_inertia = 0.01  # fallback
+
+    Ix = max(Ix, min_inertia)
+    Iy = max(Iy, min_inertia)
+    Iz = max(Iz, min_inertia)
 
     return (Ix, Iy, Iz)

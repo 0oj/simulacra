@@ -503,6 +503,22 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+#camera-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+#camera-controls .pb-btn {
+  font-size: 9px;
+  padding: 6px 10px;
+  min-width: 0;
+  width: auto;
+}
+
 /* ============================================================================
    HUD overlay — live telemetry on the 3D scene
    ============================================================================ */

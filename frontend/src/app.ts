@@ -72,6 +72,11 @@ export class App {
           <span id="speed-display">1.0×</span>
           <button id="speed-up" class="pb-btn" title="Faster">+</button>
         </div>
+        <div id="camera-controls">
+          <button id="fit-btn" class="pb-btn" title="Fit View (F)">FIT</button>
+          <button id="focus-btn" class="pb-btn" title="Focus Rocket (C)">FOCUS</button>
+          <button id="reset-cam-btn" class="pb-btn" title="Reset Camera (R)">RESET</button>
+        </div>
       </div>
     `
     document.body.appendChild(root)
@@ -483,6 +488,19 @@ export class App {
       this.speedDisplay.textContent = this.speed + '×'
     })
 
+    // Camera controls
+    document.getElementById('fit-btn')!.addEventListener('click', () => {
+      this.sceneManager.frameFit(this.scenarios)
+    })
+
+    document.getElementById('focus-btn')!.addEventListener('click', () => {
+      this.sceneManager.focusOnRocket(this.scenarios, this.currentTime)
+    })
+
+    document.getElementById('reset-cam-btn')!.addEventListener('click', () => {
+      this.sceneManager.resetCamera()
+    })
+
     this.timeline.addEventListener('input', () => {
       const frac = parseFloat(this.timeline.value) / 1000
       this.currentTime = frac * this.maxTime
@@ -502,6 +520,12 @@ export class App {
         this.speedDisplay.textContent = this.speed + '×'
       } else if (e.key === 'Home' || e.key === '0') {
         this.currentTime = 0
+      } else if (e.key === 'f' || e.key === 'F') {
+        this.sceneManager.frameFit(this.scenarios)
+      } else if (e.key === 'c' || e.key === 'C') {
+        this.sceneManager.focusOnRocket(this.scenarios, this.currentTime)
+      } else if (e.key === 'r' || e.key === 'R') {
+        this.sceneManager.resetCamera()
       }
     })
   }

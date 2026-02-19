@@ -42,8 +42,12 @@ def _make_grounded_rocket(
     return Rocket(props=props, state=state), env
 
 
-def test_rocket_tips_over_when_tilted():
-    """A tilted rocket on the ground acquires angular velocity and eventually lies flat."""
+def test_tilted_rocket_landing_freezes_at_touchdown():
+    """A tilted rocket touching down freezes at its landing orientation.
+
+    With the simplified ground model, we don't simulate ground physics.
+    Landing is instantaneous - state freezes at touchdown.
+    """
     # Tilt 10 degrees from upright (upright = +90° about Z, so tilt = 80° about Z)
     tilt_angle = np.radians(80.0)
     orientation = Orientation.from_axis_angle([0.0, 0.0, 1.0], tilt_angle)
@@ -51,16 +55,17 @@ def test_rocket_tips_over_when_tilted():
     k = Kernel(rocket, env)
 
     dt = 0.01
-    tipped = False
-    for _ in range(500):
-        k.step(dt)
-        # Check if nose has gone below horizontal
-        nose_world = RocketVec3(1.0, 0.0, 0.0).to_world(rocket.state.orientation)
-        if nose_world.y <= 0.0:
-            tipped = True
-            break
+    k.step(dt)
 
-    assert tipped, "Tilted rocket should tip over and lie flat"
+    # Should be on ground with frozen state
+    assert k.ground_contact.on_ground
+    np.testing.assert_allclose(rocket.state.velocity.norm, 0.0, atol=1e-12)
+    np.testing.assert_allclose(rocket.state.angular_velocity_body.norm, 0.0, atol=1e-12)
+
+    # Not tipped over because nose is still above horizontal
+    nose_world = RocketVec3(1.0, 0.0, 0.0).to_world(rocket.state.orientation)
+    assert nose_world.y > 0.0, "10° tilt should not be tipped over"
+    assert not k.ground_contact.tipped_over
 
 
 def test_upright_rocket_stays_upright():
@@ -150,34 +155,26 @@ def test_grounded_rocket_lifts_off_with_sufficient_thrust():
     assert rocket.state.position.y > 0.0, "Position should be above ground"
 
 
-def test_thrust_reduces_tipping_rate():
-    """A tilted rocket with near-hover thrust tips slower than one with no thrust."""
+def test_ground_contact_freezes_all_velocities():
+    """Ground contact immediately freezes all velocities regardless of thrust."""
     tilt_angle = np.radians(80.0)  # 10 degrees from upright
     orientation = Orientation.from_axis_angle([0.0, 0.0, 1.0], tilt_angle)
 
-    # No-thrust case
-    rocket_no_thrust, env = _make_grounded_rocket(orientation)
-    k_no_thrust = Kernel(rocket_no_thrust, env)
-
-    # Near-hover thrust case (90% of weight along body +X)
-    rocket_thrust, env2 = _make_grounded_rocket(orientation)
+    # With thrust case
+    rocket, env = _make_grounded_rocket(orientation)
     # Weight = 10 * 9.81 = 98.1 N. Apply 90 N along body +X.
-    rocket_thrust.state.thrust_body = RocketVec3(90.0, 0.0, 0.0)
-    k_thrust = Kernel(rocket_thrust, env2)
+    rocket.state.thrust_body = RocketVec3(90.0, 0.0, 0.0)
+    k = Kernel(rocket, env)
 
     dt = 0.01
-    steps = 50
-    for _ in range(steps):
-        k_no_thrust.step(dt)
-        k_thrust.step(dt)
+    k.step(dt)
 
-    omega_no_thrust = rocket_no_thrust.state.angular_velocity_body.norm
-    omega_thrust = rocket_thrust.state.angular_velocity_body.norm
-
-    assert omega_thrust < omega_no_thrust, (
-        f"Near-hover thrust should reduce tipping rate: "
-        f"no_thrust={omega_no_thrust:.4f}, thrust={omega_thrust:.4f}"
-    )
+    # Ground contact should freeze everything
+    assert k.ground_contact.on_ground
+    np.testing.assert_allclose(rocket.state.velocity.norm, 0.0, atol=1e-12)
+    np.testing.assert_allclose(rocket.state.angular_velocity_body.norm, 0.0, atol=1e-12)
+    # Thrust is also zeroed
+    np.testing.assert_allclose(rocket.state.thrust_body.norm, 0.0, atol=1e-12)
 
 
 def test_impact_metrics_latched_on_touchdown():
@@ -283,32 +280,33 @@ def test_metrics_reset_on_liftoff():
 
 
 def test_on_ground_and_tipped_flags():
-    """Verify flag transitions through a full tip-over sequence."""
-    # Start tilted 10° from upright
-    tilt_angle = np.radians(80.0)
+    """Verify flag states for landing scenarios."""
+    dt = 0.01
+
+    # Case 1: Slightly tilted (10° from upright) - should land upright
+    tilt_angle = np.radians(80.0)  # 10° from vertical
     orientation = Orientation.from_axis_angle([0.0, 0.0, 1.0], tilt_angle)
     rocket, env = _make_grounded_rocket(orientation)
     k = Kernel(rocket, env)
 
-    dt = 0.01
-
-    # Initially not on_ground (first step hasn't run)
+    # Initially not on ground
     assert not k.ground_contact.on_ground
     assert not k.ground_contact.tipped_over
 
-    # After first step, should be on ground
+    # After first step, on ground but not tipped
     k.step(dt)
     assert k.ground_contact.on_ground
     assert not k.ground_contact.tipped_over
 
-    # Run until tipped
-    for _ in range(500):
-        k.step(dt)
-        if k.ground_contact.tipped_over:
-            break
+    # Case 2: Severely tilted (past horizontal) - should be tipped
+    tilt_angle_severe = np.radians(-10.0)  # Past horizontal, nose pointing down
+    orientation_severe = Orientation.from_axis_angle([0.0, 0.0, 1.0], tilt_angle_severe)
+    rocket2, env2 = _make_grounded_rocket(orientation_severe)
+    k2 = Kernel(rocket2, env2)
 
-    assert k.ground_contact.on_ground
-    assert k.ground_contact.tipped_over
+    k2.step(dt)
+    assert k2.ground_contact.on_ground
+    assert k2.ground_contact.tipped_over
 
 
 def test_lateral_velocity_zeroed_on_ground():

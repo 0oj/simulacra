@@ -621,6 +621,39 @@ export class SceneManager {
     posAttr.needsUpdate = true
   }
 
+  /** Reset camera to default position looking at origin */
+  resetCamera(): void {
+    this.controls.target.set(0, 20, 0)
+    this.camera.position.set(30, 40, 60)
+    this.controls.update()
+  }
+
+  /** Focus camera on current rocket position */
+  focusOnRocket(scenarios: Scenario[], currentTime: number): void {
+    if (scenarios.length === 0) return
+
+    // Find the current position of the first rocket
+    const scenario = scenarios[0]
+    const frames = scenario.data.frames
+    const idx = frameIndexAt(frames, currentTime)
+    if (idx < 0) return
+
+    const [px, py, pz] = frames[idx].position
+    const rocketLen = scenario.data.rocketLength
+
+    // Set target to rocket position
+    this.controls.target.set(px, py, pz)
+
+    // Position camera at a good viewing distance
+    const dist = Math.max(rocketLen * 8, 20)
+    this.camera.position.set(
+      px + dist * 0.5,
+      py + dist * 0.6,
+      pz + dist * 0.8,
+    )
+    this.controls.update()
+  }
+
   frameFit(scenarios: Scenario[]): void {
     if (scenarios.length === 0) return
 
