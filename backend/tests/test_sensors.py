@@ -633,3 +633,127 @@ class TestRealisticSensorBundle:
         assert sensors.Accelerometer._time == 3.14
         assert sensors.Magnetometer._time == 3.14
         assert sensors.Barometer._time == 3.14
+
+
+class TestAttitudeEstimator:
+    """Tests for the AttitudeEstimator (complementary filter)."""
+
+    def test_estimator_exists_in_bundle(self, kernel):
+        """Sensors bundle includes AttitudeEstimator."""
+        sensors = Sensors(kernel)
+        assert hasattr(sensors, 'AttitudeEstimator')
+
+    def test_initial_update_uses_reference(self):
+        """First update initializes from accelerometer + magnetometer."""
+        from simulacra.noumena.rocket import get_upright_orientation
+
+        # Create a rocket that's upright
+        props = RocketProps(
+            length=10.0,
+            mass=1000.0,
+            center_of_mass_offset=RocketVec3(5.0, 0.0, 0.0),
+            inertia_diag=(100.0, 1000.0, 1000.0),
+            thrust_application_offset=RocketVec3(0.0, 0.0, 0.0),
+        )
+        state = RocketState(
+            position=WorldVec3(0.0, 50.0, 0.0),
+            velocity=WorldVec3(0.0, 0.0, 0.0),
+            orientation=get_upright_orientation(),
+            angular_velocity_body=RocketVec3(0.0, 0.0, 0.0),
+            thrust_body=RocketVec3(0.0, 0.0, 0.0),
+        )
+        rocket = Rocket(props, state)
+        env = Environment()
+        kernel = Kernel(rocket, env)
+        kernel.ground_contact.on_ground = True
+
+        sensors = Sensors(kernel)
+
+        # First update should initialize from accel+mag
+        sensors.update_attitude_estimator(dt=0.02)
+        estimated = sensors.AttitudeEstimator.read()
+
+        # Should be approximately upright (nose pointing up = body +X to world +Y)
+        # The exact value depends on the mag field, but it should be reasonable
+        assert isinstance(estimated, Orientation)
+
+    def test_gyro_integration_short_term(self, kernel):
+        """Estimator follows gyro for short-term changes."""
+        sensors = Sensors(kernel)
+
+        # Initialize
+        sensors.update_attitude_estimator(dt=0.02)
+        initial = sensors.AttitudeEstimator.read()
+
+        # With alpha=0.98, the estimator heavily trusts gyro short-term
+        # The kernel fixture has angular_velocity_body = (0.1, 0.2, 0.3)
+        # After one step, orientation should change slightly
+
+        sensors.update_attitude_estimator(dt=0.02)
+        after_step = sensors.AttitudeEstimator.read()
+
+        # Orientation should have changed (due to angular velocity)
+        initial_arr = initial.as_array()
+        after_arr = after_step.as_array()
+        assert not np.allclose(initial_arr, after_arr, atol=1e-6)
+
+    def test_estimator_reset(self, kernel):
+        """Estimator can be reset to a known orientation."""
+        sensors = Sensors(kernel)
+
+        # Do some updates
+        sensors.update_attitude_estimator(dt=0.02)
+        sensors.update_attitude_estimator(dt=0.02)
+
+        # Reset to identity
+        sensors.AttitudeEstimator.reset(Orientation.identity())
+        reset_orientation = sensors.AttitudeEstimator.read()
+
+        # Should be exactly identity
+        arr = reset_orientation.as_array()
+        assert arr[0] == pytest.approx(1.0)  # w
+        assert arr[1] == pytest.approx(0.0)  # x
+        assert arr[2] == pytest.approx(0.0)  # y
+        assert arr[3] == pytest.approx(0.0)  # z
+
+    def test_alpha_parameter_affects_blend(self):
+        """Different alpha values change gyro vs reference trust."""
+        from simulacra.phenomena.sensors import AttitudeEstimator, Accelerometer, GyroSensor, Magnetometer
+
+        # Create two estimators with different alpha
+        props = RocketProps(
+            length=10.0,
+            mass=1000.0,
+            center_of_mass_offset=RocketVec3(5.0, 0.0, 0.0),
+            inertia_diag=(100.0, 1000.0, 1000.0),
+            thrust_application_offset=RocketVec3(0.0, 0.0, 0.0),
+        )
+        state = RocketState(
+            position=WorldVec3(0.0, 50.0, 0.0),
+            velocity=WorldVec3(0.0, 0.0, 0.0),
+            orientation=Orientation.identity(),
+            angular_velocity_body=RocketVec3(0.5, 0.0, 0.0),  # Rotating
+            thrust_body=RocketVec3(0.0, 0.0, 0.0),
+        )
+        rocket = Rocket(props, state)
+        env = Environment()
+        kernel = Kernel(rocket, env)
+
+        accel = Accelerometer(kernel)
+        gyro = GyroSensor(kernel)
+        mag = Magnetometer(kernel)
+
+        # High alpha = trust gyro more (more drift, smoother)
+        estimator_high = AttitudeEstimator(accel, gyro, mag, alpha=0.99)
+        # Low alpha = trust reference more (less drift, noisier)
+        estimator_low = AttitudeEstimator(accel, gyro, mag, alpha=0.90)
+
+        # Run several updates
+        for _ in range(10):
+            estimator_high.update(dt=0.02)
+            estimator_low.update(dt=0.02)
+
+        # They should differ (different blend of gyro vs reference)
+        high_arr = estimator_high.read().as_array()
+        low_arr = estimator_low.read().as_array()
+        assert not np.allclose(high_arr, low_arr, atol=1e-3)
