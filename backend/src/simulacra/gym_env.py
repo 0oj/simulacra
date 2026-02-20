@@ -458,15 +458,13 @@ class RocketLandingEnv(gym.Env):
             high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
         )
 
-        # Observation space: [pos(3), vel(3), quat(4), omega(3), thrust(1), fuel(1)]
+        # Observation space: [pos(3), vel(3), quat(4), omega(3)] = 13 dims
         obs_low = np.array(
             [
-                -100, -10, -100,     # position
+                -100, -10, -100,     # position (gps_x, baro_alt, gps_z)
                 -50, -50, -50,       # velocity
-                -1, -1, -1, -1,      # quaternion
+                -1, -1, -1, -1,      # quaternion (from attitude estimator)
                 -10, -10, -10,       # angular velocity
-                0,                   # thrust
-                0,                   # fuel fraction
             ],
             dtype=np.float32,
         )
@@ -476,8 +474,6 @@ class RocketLandingEnv(gym.Env):
                 50, 50, 50,          # velocity
                 1, 1, 1, 1,          # quaternion
                 10, 10, 10,          # angular velocity
-                max_thrust,          # thrust
-                1,                   # fuel fraction
             ],
             dtype=np.float32,
         )
@@ -535,14 +531,22 @@ class RocketLandingEnv(gym.Env):
         return Actuators(gimbal=gimbal, throttle=throttle)
 
     def _get_obs(self) -> np.ndarray:
-        """Extract observation from sensors (realistic sensor suite)."""
+        """
+        Extract observation from sensors (realistic sensor suite).
+
+        13-dim observation:
+            [gps_x, baro_alt, gps_z,     # position (3)
+             vel_x, vel_y, vel_z,         # velocity (3)
+             qw, qx, qy, qz,              # orientation from AHRS (4)
+             omega_x, omega_y, omega_z]   # angular velocity (3)
+
+        No thrust or fuel - agent doesn't directly observe these.
+        """
         gps = self._sensors.GPS.read()  # Horizontal position (x, z)
         alt = self._sensors.Barometer.read()  # Altitude (y)
         vel = self._sensors.VelocitySensor.read()  # TODO: replace with accel integration
         orient = self._sensors.AttitudeEstimator.read()  # Fused orientation estimate
         omega = self._sensors.GyroSensor.read()
-        thrust = self._sensors.ThrustSensor.read()  # TODO: replace with commanded thrust
-        fuel = self._sensors.FuelSensor.read()
 
         qw, qx, qy, qz = orient.as_array()
 
@@ -552,8 +556,6 @@ class RocketLandingEnv(gym.Env):
                 vel.x, vel.y, vel.z,
                 qw, qx, qy, qz,
                 omega.x, omega.y, omega.z,
-                thrust,
-                fuel,
             ],
             dtype=np.float32,
         )

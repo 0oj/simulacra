@@ -221,7 +221,7 @@ class TestRocketLandingEnv:
         """Environment can be created with default params."""
         env = RocketLandingEnv()
         assert env is not None
-        assert env.observation_space.shape == (15,)  # +1 for fuel
+        assert env.observation_space.shape == (13,)  # pos(3), vel(3), quat(4), omega(3)
         assert env.action_space.shape == (3,)
 
     def test_reset_returns_valid_obs(self):
@@ -229,7 +229,7 @@ class TestRocketLandingEnv:
         env = RocketLandingEnv()
         obs, info = env.reset(seed=42)
 
-        assert obs.shape == (15,)
+        assert obs.shape == (13,)
         assert not np.any(np.isnan(obs)), "Observation contains NaN"
         assert not np.any(np.isinf(obs)), "Observation contains Inf"
         assert env.observation_space.contains(obs), "Observation out of bounds"
@@ -241,32 +241,37 @@ class TestRocketLandingEnv:
         env = RocketLandingEnv(init_altitude_range=(40.0, 60.0))
         obs, info = env.reset(seed=42)
 
-        altitude = obs[1]  # y position
+        altitude = obs[1]  # y position (barometer)
         assert altitude >= 35.0, "Should start at altitude"
         assert altitude <= 65.0, "Should start within range"
 
-    def test_fuel_in_observation(self):
-        """Fuel fraction is included in observation."""
+    def test_fuel_tracked_in_info(self):
+        """Fuel is tracked in info dict (not in observation)."""
         env = RocketLandingEnv()
-        obs, _ = env.reset(seed=42)
+        obs, info = env.reset(seed=42)
 
-        fuel = obs[14]  # last element
-        assert 0.0 <= fuel <= 1.0, "Fuel should be a fraction"
+        # Fuel is in info, not observation
+        assert "init_fuel" in info
+        assert 0.0 <= info["init_fuel"] <= 1.0
 
     def test_step_consumes_fuel(self):
-        """Thrust consumes fuel over time."""
+        """Thrust consumes fuel over time (tracked in info)."""
         env = RocketLandingEnv()
-        obs, _ = env.reset(seed=42)
-        initial_fuel = obs[14]
+        env.reset(seed=42)
 
         # Full throttle for several steps
         action = np.array([1.0, 0.0, 0.0], dtype=np.float32)
-        for _ in range(50):
-            obs, _, terminated, _, _ = env.step(action)
+        initial_fuel = None
+        final_fuel = None
+
+        for i in range(50):
+            obs, _, terminated, _, info = env.step(action)
+            if i == 0:
+                initial_fuel = info["fuel"]
+            final_fuel = info["fuel"]
             if terminated:
                 break
 
-        final_fuel = obs[14]
         assert final_fuel < initial_fuel, "Fuel should decrease with thrust"
 
     def test_landing_terminates(self):
