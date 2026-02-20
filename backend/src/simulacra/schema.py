@@ -53,6 +53,7 @@ def Actuator(attr: str):
 
 TRANSFORMS: dict[str, Callable[[Any], Any]] = {
     "orientation_to_quat": lambda o: tuple(o.as_array()),
+    "gps_to_horizontal": lambda g: {"x": g.x, "z": g.z},
 }
 
 SCHEMA_VERSION = "0.3.0"
@@ -188,10 +189,16 @@ class VariableMessage(BaseMessage):
         description="Remaining fuel as a fraction 0..1 (0 = empty, 1 = full).",
     )
 
-    # Sensor readings (phenomena) - GPS
-    gps: Annotated[Optional[WorldVec3], Sensor("GPS")] = Field(
+    # Sensor readings (phenomena) - GPS (horizontal only)
+    gps: Annotated[Optional[dict], Sensor("GPS", transform="gps_to_horizontal")] = Field(
         default=None,
-        description="GPS reading (meters) in the world frame.",
+        description="GPS reading (meters), horizontal position only {x, z}.",
+    )
+
+    # Sensor readings (phenomena) - Barometer (altitude)
+    barometer: Annotated[Optional[float], Sensor("Barometer")] = Field(
+        default=None,
+        description="Barometer reading (meters), altitude above ground.",
     )
 
     # Sensor readings (phenomena) - thrust sensor

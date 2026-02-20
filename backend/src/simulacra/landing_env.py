@@ -267,7 +267,8 @@ class RocketLandingEnv(gym.Env):
         return Actuators(gimbal=gimbal, throttle=throttle)
 
     def _get_obs(self) -> np.ndarray:
-        pos = self._sensors.GPS.read()
+        gps = self._sensors.GPS.read()  # Horizontal position (x, z)
+        alt = self._sensors.Barometer.read()  # Altitude (y)
         vel = self._sensors.VelocitySensor.read()
         orient = self._sensors.OrientationSensor.read()
         omega = self._sensors.GyroSensor.read()
@@ -276,12 +277,12 @@ class RocketLandingEnv(gym.Env):
         qw, qx, qy, qz = orient.as_array()
 
         # Target info: displacement to landing pad at origin
-        dx = -pos.x  # how far we need to go in x
-        dz = -pos.z  # how far we need to go in z
-        dist = math.sqrt(pos.x**2 + pos.z**2)
+        dx = -gps.x  # how far we need to go in x
+        dz = -gps.z  # how far we need to go in z
+        dist = math.sqrt(gps.x**2 + gps.z**2)
 
         return np.array([
-            pos.x, pos.y, pos.z,
+            gps.x, alt, gps.z,
             vel.x, vel.y, vel.z,
             qw, qx, qy, qz,
             omega.x, omega.y, omega.z,

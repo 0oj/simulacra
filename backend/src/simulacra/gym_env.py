@@ -194,7 +194,8 @@ class RocketHoverEnv(gym.Env):
 
     def _get_obs(self) -> np.ndarray:
         """Extract observation from sensors."""
-        pos = self._sensors.GPS.read()
+        gps = self._sensors.GPS.read()  # Horizontal position (x, z)
+        alt = self._sensors.Barometer.read()  # Altitude (y)
         vel = self._sensors.VelocitySensor.read()
         orient = self._sensors.OrientationSensor.read()
         omega = self._sensors.GyroSensor.read()
@@ -204,7 +205,7 @@ class RocketHoverEnv(gym.Env):
 
         return np.array(
             [
-                pos.x, pos.y, pos.z,
+                gps.x, alt, gps.z,
                 vel.x, vel.y, vel.z,
                 qw, qx, qy, qz,
                 omega.x, omega.y, omega.z,
@@ -531,7 +532,8 @@ class RocketLandingEnv(gym.Env):
 
     def _get_obs(self) -> np.ndarray:
         """Extract observation from sensors."""
-        pos = self._sensors.GPS.read()
+        gps = self._sensors.GPS.read()  # Horizontal position (x, z)
+        alt = self._sensors.Barometer.read()  # Altitude (y)
         vel = self._sensors.VelocitySensor.read()
         orient = self._sensors.OrientationSensor.read()
         omega = self._sensors.GyroSensor.read()
@@ -542,7 +544,7 @@ class RocketLandingEnv(gym.Env):
 
         return np.array(
             [
-                pos.x, pos.y, pos.z,
+                gps.x, alt, gps.z,
                 vel.x, vel.y, vel.z,
                 qw, qx, qy, qz,
                 omega.x, omega.y, omega.z,

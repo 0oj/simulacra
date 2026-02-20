@@ -107,13 +107,15 @@ class LandingController(Controller):
         cfg = self.config
 
         # Read sensors
-        pos = self.sensors.GPS.read()
+        gps = self.sensors.GPS.read()  # Horizontal position
+        alt = self.sensors.Barometer.read()  # Altitude
         vel = self.sensors.VelocitySensor.read()
         orientation = self.sensors.OrientationSensor.read()
         omega_body = self.sensors.GyroSensor.read()
 
         # Current state
-        x, y, z = pos.x, pos.y, pos.z
+        x, z = gps.x, gps.z
+        y = alt
         vx, vy, vz = vel.x, vel.y, vel.z
         altitude = max(0.1, y)  # clamp to avoid issues near ground
         vel_mag = math.sqrt(vx**2 + vy**2 + vz**2)

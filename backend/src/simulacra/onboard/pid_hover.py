@@ -50,10 +50,9 @@ class PIDHoverController(Controller):
             raise ValueError("Sensors not attached to controller")
 
         # Read from sensors (not truth)
-        pos = self.sensors.GPS.read()
+        alt = self.sensors.Barometer.read()  # Altitude from barometer, not GPS
         vel = self.sensors.VelocitySensor.read()
 
-        alt = pos.y
         vy = vel.y
 
         # PD control: thrust = weight + Kp*(target - alt) - Kd*vy

@@ -91,14 +91,15 @@ class HoverController(Controller):
         cfg = self.config
 
         # Read sensor data
-        pos = self.sensors.GPS.read()
+        gps = self.sensors.GPS.read()  # Horizontal position (x, z)
+        alt = self.sensors.Barometer.read()  # Altitude (y)
         vel = self.sensors.VelocitySensor.read()
         orientation = self.sensors.OrientationSensor.read()
         quat = tuple(orientation.as_array())  # (w, x, y, z), body→world
         omega_body = self.sensors.GyroSensor.read()  # angular velocity in body frame
 
         # === Altitude Control (outer loop) ===
-        alt_error = cfg.target_alt - pos.y
+        alt_error = cfg.target_alt - alt
         vy = vel.y
 
         # PD control for thrust magnitude

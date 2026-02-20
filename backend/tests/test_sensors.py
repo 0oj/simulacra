@@ -215,15 +215,17 @@ class TestRandomWalk:
 
 
 class TestGPSSensor:
-    """Tests for GPS sensor with per-channel errors."""
+    """Tests for GPS sensor (horizontal position only)."""
 
     def test_default_returns_truth(self, kernel):
+        """GPS returns horizontal position (x, z), not altitude."""
         gps = GPS(kernel)
         reading = gps.read()
 
         assert reading.x == 100.0
-        assert reading.y == 200.0
         assert reading.z == 300.0
+        # GPS doesn't have .y - use Barometer for altitude
+        assert not hasattr(reading, 'y')
 
     def test_per_channel_bias(self, kernel):
         """Each channel can have different errors."""
@@ -231,14 +233,12 @@ class TestGPSSensor:
             kernel,
             errors={
                 "x": Bias(offset=1.0),
-                "y": Bias(offset=2.0),
                 "z": Bias(offset=3.0),
             },
         )
         reading = gps.read()
 
         assert reading.x == 101.0
-        assert reading.y == 202.0
         assert reading.z == 303.0
 
     def test_partial_channel_errors(self, kernel):
@@ -247,8 +247,7 @@ class TestGPSSensor:
         reading = gps.read()
 
         assert reading.x == 110.0
-        assert reading.y == 200.0  # No error
-        assert reading.z == 300.0  # No error
+        assert reading.z == 300.0  # No error on z
 
     def test_noisy_gps_reproducible(self, kernel):
         """Seeded noise produces reproducible readings."""

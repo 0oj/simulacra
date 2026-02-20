@@ -10,13 +10,24 @@ for Euler perturbations on orientation.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Protocol, Tuple, TYPE_CHECKING
+from typing import Any, NamedTuple, Optional, Protocol, Tuple, TYPE_CHECKING
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from ..physics import Orientation, RocketVec3, WorldVec3
 from .errors import ChannelErrors, IdentityError, SensorError
+
+
+class GPSReading(NamedTuple):
+    """
+    GPS horizontal position reading.
+
+    GPS provides good horizontal accuracy (~2-5m) but poor vertical (~10-15m).
+    Use Barometer for altitude instead.
+    """
+    x: float  # World-frame horizontal position (meters)
+    z: float  # World-frame horizontal position (meters)
 
 if TYPE_CHECKING:
     from ..noumena import Kernel
@@ -63,7 +74,10 @@ class GPS(Sensor):
     """
     Global Positioning System.
 
-    Channels: 'x', 'y', 'z' (world-frame position components).
+    Returns horizontal position only. GPS vertical accuracy is poor (~10-15m);
+    use Barometer for altitude instead.
+
+    Channels: 'x', 'z' (world-frame horizontal position components).
     """
 
     def __init__(
@@ -72,17 +86,16 @@ class GPS(Sensor):
         errors: Optional[ChannelErrors] = None,
     ):
         self._kernel = kernel
-        self._errors = errors or _default_errors("x", "y", "z")
+        self._errors = errors or _default_errors("x", "z")
         self._time: float = 0.0
 
-    def read(self) -> WorldVec3:
-        """Read position with per-channel errors applied."""
+    def read(self) -> GPSReading:
+        """Read horizontal position with per-channel errors applied."""
         truth = self._kernel.rocket.state.position
         t = self._time
-        return WorldVec3(
-            self._errors.get("x", _identity_error()).apply(truth.x, t),
-            self._errors.get("y", _identity_error()).apply(truth.y, t),
-            self._errors.get("z", _identity_error()).apply(truth.z, t),
+        return GPSReading(
+            x=self._errors.get("x", _identity_error()).apply(truth.x, t),
+            z=self._errors.get("z", _identity_error()).apply(truth.z, t),
         )
 
 

@@ -70,10 +70,9 @@ class SuicideBurnController(Controller):
         if not self.sensors:
             return
 
-        pos = self.sensors.GPS.read()
+        altitude = self.sensors.Barometer.read()  # Altitude from barometer
         vel = self.sensors.VelocitySensor.read()
 
-        altitude = pos.y
         velocity = vel.y  # Negative when falling
 
         # Calculate burn altitude for current velocity
