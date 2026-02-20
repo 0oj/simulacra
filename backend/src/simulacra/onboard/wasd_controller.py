@@ -1,94 +1,160 @@
-import sys
-import select
-import tty
-import termios
-from .controller import Controller
+"""
+WASD Controller for interactive rocket control.
+
+Translates keyboard input into thrust and gimbal commands.
+Designed to receive real-time input from a frontend via WebSocket.
+
+Controls:
+    W / S     - Increase / decrease throttle
+    A / D     - Gimbal left / right (yaw)
+    Q / E     - Gimbal up / down (pitch)
+    Space     - Kill throttle (emergency stop)
+    Shift     - Boost throttle to max
+"""
+
+from dataclasses import dataclass
+from typing import Set
+
+from ..phenomena.actuators import (
+    ThrottleActuator,
+    ThrottleCommand,
+    GimbalActuator,
+    GimbalCommand,
+)
 from ..phenomena.sensors import Sensors
-from ..phenomena.actuators import GimbalActuator, GimbalCommand
+from .controller import Controller
+
+
+@dataclass
+class WASDControllerConfig:
+    """Configuration for WASD controller."""
+
+    max_thrust: float = 2000.0  # N
+    throttle_rate: float = 500.0  # N/s - how fast throttle changes
+    gimbal_rate: float = 0.5  # rad/s - how fast gimbal moves
+    max_gimbal_angle: float = 0.26  # rad (~15 degrees)
+
+    # Initial throttle (fraction of max)
+    initial_throttle: float = 0.0
 
 
 class WASDController(Controller):
     """
-    Controller that listens for WASD keypresses each run() to control the gimbal/thrust vector.
+    Interactive controller that responds to keyboard input.
 
-    By convention:
-      - W/S: pitch up/down (inner gimbal: +Y axis, green)
-      - A/D: yaw left/right (outer gimbal: +Z axis, blue)
+    Call `key_down(key)` and `key_up(key)` to update the key state,
+    then `run()` each simulation step to apply commands.
     """
 
-    def __init__(self, gimbal_actuator: GimbalActuator):
+    def __init__(
+        self,
+        throttle: ThrottleActuator,
+        gimbal: GimbalActuator,
+        config: WASDControllerConfig | None = None,
+    ):
+        self.throttle_actuator = throttle
+        self.gimbal_actuator = gimbal
+        self.config = config or WASDControllerConfig()
         self.sensors: Sensors | None = None
-        self.gimbal_actuator = gimbal_actuator
 
-        # Gimbal angles (radians)
-        self.outer_angle: float = 0.0  # yaw (about Z/blue), A/D keys
-        self.inner_angle: float = 0.0  # pitch (about Y/green), W/S keys
+        # Current state
+        self._throttle = self.config.initial_throttle * self.config.max_thrust
+        self._gimbal_outer = 0.0  # yaw (A/D)
+        self._gimbal_inner = 0.0  # pitch (Q/E)
 
-        # Increment per keypress (radians)
-        self.step: float = 0.02
+        # Keys currently held down
+        self._keys_down: Set[str] = set()
+
+        # Time tracking for rate-based control
+        self._dt = 0.02  # Will be updated by run()
 
     def with_sensors(self, sensors: Sensors) -> "WASDController":
         self.sensors = sensors
         return self
 
-    def _get_keyboard_input(self, prompt: str = "WASD> ") -> str:
-        """
-        Non-blocking, prompt for one line of input.
-        If running in a TTY, disables line buffering to allow immediate key read.
-        """
-        sys.stdout.write(prompt)
-        sys.stdout.flush()
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            # Wait for input (but non-blocking)
-            r, _, _ = select.select([fd], [], [], 0.1)
-            if r:
-                ch = sys.stdin.read(1)
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                return ch
-            else:
-                sys.stdout.write("\n")
-                sys.stdout.flush()
-                return ""
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+    def set_dt(self, dt: float) -> None:
+        """Set the timestep for rate calculations."""
+        self._dt = dt
+
+    def key_down(self, key: str) -> None:
+        """Register a key press."""
+        self._keys_down.add(key.lower())
+
+    def key_up(self, key: str) -> None:
+        """Register a key release."""
+        self._keys_down.discard(key.lower())
+
+    def set_keys(self, keys: Set[str]) -> None:
+        """Set the complete key state (for WebSocket updates)."""
+        self._keys_down = {k.lower() for k in keys}
 
     def run(self) -> None:
-        if self.sensors is None:
-            raise ValueError("Sensors not attached to controller")
+        """Update commands based on current key state."""
+        cfg = self.config
+        dt = self._dt
 
-        # Prompt user each timestep for WASD input
-        key = self._get_keyboard_input(
-            "WASD (a/d: yaw, w/s: pitch, q: quit, Enter: noop)> "
-        ).lower()
+        # --- Throttle control ---
 
-        if "q" in key:
-            print("Quitting by user command (q pressed).")
-            sys.exit(0)
+        # Space = kill throttle
+        if "space" in self._keys_down or " " in self._keys_down:
+            self._throttle = 0.0
+        # Shift = max throttle
+        elif "shift" in self._keys_down:
+            self._throttle = cfg.max_thrust
+        else:
+            # W/S = increase/decrease
+            if "w" in self._keys_down:
+                self._throttle += cfg.throttle_rate * dt
+            if "s" in self._keys_down:
+                self._throttle -= cfg.throttle_rate * dt
 
-        # Apply controls
-        if "w" in key:
-            self.inner_angle += self.step
-        if "s" in key:
-            self.inner_angle -= self.step
-        if "a" in key:
-            self.outer_angle += self.step
-        if "d" in key:
-            self.outer_angle -= self.step
+        # Clamp throttle
+        self._throttle = max(0.0, min(cfg.max_thrust, self._throttle))
 
-        # Clamp to actuator mechanical limits
-        max_outer = getattr(self.gimbal_actuator, "max_outer_angle", 0.3)
-        max_inner = getattr(self.gimbal_actuator, "max_inner_angle", 0.3)
-        self.outer_angle = max(-max_outer, min(self.outer_angle, max_outer))
-        self.inner_angle = max(-max_inner, min(self.inner_angle, max_inner))
+        # --- Gimbal control ---
 
-        # Command the actuator
-        self.gimbal_actuator.apply(
-            GimbalCommand(
-                desired_outer_angle=self.outer_angle,
-                desired_inner_angle=self.inner_angle,
-            )
-        )
+        # A/D = yaw (outer gimbal)
+        if "a" in self._keys_down:
+            self._gimbal_outer += cfg.gimbal_rate * dt
+        if "d" in self._keys_down:
+            self._gimbal_outer -= cfg.gimbal_rate * dt
+
+        # Q/E = pitch (inner gimbal)
+        if "q" in self._keys_down:
+            self._gimbal_inner += cfg.gimbal_rate * dt
+        if "e" in self._keys_down:
+            self._gimbal_inner -= cfg.gimbal_rate * dt
+
+        # Return gimbal to center when keys released
+        if "a" not in self._keys_down and "d" not in self._keys_down:
+            # Decay toward zero
+            self._gimbal_outer *= 0.9
+        if "q" not in self._keys_down and "e" not in self._keys_down:
+            self._gimbal_inner *= 0.9
+
+        # Clamp gimbal
+        self._gimbal_outer = max(-cfg.max_gimbal_angle, min(cfg.max_gimbal_angle, self._gimbal_outer))
+        self._gimbal_inner = max(-cfg.max_gimbal_angle, min(cfg.max_gimbal_angle, self._gimbal_inner))
+
+        # --- Apply commands ---
+
+        self.throttle_actuator.apply(ThrottleCommand(thrust_N=self._throttle))
+        self.gimbal_actuator.apply(GimbalCommand(
+            desired_outer_angle=self._gimbal_outer,
+            desired_inner_angle=self._gimbal_inner,
+        ))
+
+    @property
+    def throttle_percent(self) -> float:
+        """Current throttle as percentage."""
+        return 100.0 * self._throttle / self.config.max_thrust
+
+    @property
+    def state_summary(self) -> dict:
+        """Current controller state for debugging/display."""
+        return {
+            "throttle_percent": self.throttle_percent,
+            "gimbal_outer_deg": self._gimbal_outer * 57.3,
+            "gimbal_inner_deg": self._gimbal_inner * 57.3,
+            "keys": list(self._keys_down),
+        }

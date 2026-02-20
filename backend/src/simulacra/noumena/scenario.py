@@ -3,18 +3,21 @@ The test scenario. God orchestrates the simulation, running the controller,
 advancing physics, and recording the truth for later inspection.
 """
 
+from __future__ import annotations
+
 import heapq
 from itertools import count
-from typing import Callable, Optional, TextIO
+from typing import Callable, Optional, TextIO, TYPE_CHECKING
 
 from ..noumena import Kernel
-from ..onboard.controller import Controller
-from ..phenomena.actuators import Actuators
-from ..phenomena.sensors import Sensors
 from ..schema import ConstantMessage, MetadataMessage, VariableMessage, collect, write_message
 
+if TYPE_CHECKING:
+    from ..onboard.controller import Controller
+    from ..phenomena.actuators import Actuators
+    from ..phenomena.sensors import Sensors
 
-Callback = Callable[[float, Kernel, Controller], None]
+Callback = Callable[[float, Kernel, "Controller"], None]
 
 
 def default_callback(t: float, kernel: Kernel, controller: Controller) -> None: ...

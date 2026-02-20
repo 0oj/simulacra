@@ -7,15 +7,19 @@ named consistently: 'x', 'y', 'z' for vector quantities; 'roll', 'pitch', 'yaw'
 for Euler perturbations on orientation.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Protocol, Tuple
+from typing import Any, Optional, Protocol, Tuple, TYPE_CHECKING
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from ..noumena import Kernel
 from ..physics import Orientation, RocketVec3, WorldVec3
 from .errors import ChannelErrors, IdentityError, SensorError
+
+if TYPE_CHECKING:
+    from ..noumena import Kernel
 
 
 class Sensor(ABC):

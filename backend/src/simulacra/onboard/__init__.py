@@ -7,6 +7,7 @@ from ..onboard.controller import Controller
 from ..onboard.pid_hover import PIDHoverController
 from ..onboard.hover_controller import HoverController, HoverControllerConfig
 from ..onboard.landing_controller import LandingController, LandingControllerConfig
+from ..onboard.wasd_controller import WASDController, WASDControllerConfig
 
 __all__ = [
     "Controller",
@@ -15,4 +16,6 @@ __all__ = [
     "HoverControllerConfig",
     "LandingController",
     "LandingControllerConfig",
+    "WASDController",
+    "WASDControllerConfig",
 ]

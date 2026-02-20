@@ -408,10 +408,10 @@ export class ChartManager {
 }
 
 // ============================================================================
-// Helpers
+// Helpers (exported for reuse in interactive mode)
 // ============================================================================
 
-function niceStep(min: number, max: number, target: number): number {
+export function niceStep(min: number, max: number, target: number): number {
   const rough = (max - min) / target
   const pow = Math.pow(10, Math.floor(Math.log10(rough)))
   const norm = rough / pow
@@ -423,7 +423,7 @@ function niceStep(min: number, max: number, target: number): number {
   return step * pow
 }
 
-function fmtCompact(v: number): string {
+export function fmtCompact(v: number): string {
   if (Math.abs(v) >= 1000) return v.toFixed(0)
   if (Math.abs(v) >= 100) return v.toFixed(1)
   if (Math.abs(v) >= 1) return v.toFixed(2)

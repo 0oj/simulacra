@@ -654,6 +654,18 @@ export class SceneManager {
     this.controls.update()
   }
 
+  /** Focus camera on a specific position (for interactive mode) */
+  focusOnPosition(x: number, y: number, z: number): void {
+    this.controls.target.set(x, y, z)
+    const dist = 25
+    this.camera.position.set(
+      x + dist * 0.5,
+      y + dist * 0.6,
+      z + dist * 0.8,
+    )
+    this.controls.update()
+  }
+
   frameFit(scenarios: Scenario[]): void {
     if (scenarios.length === 0) return
 
@@ -702,5 +714,117 @@ export class SceneManager {
       cy + range * 0.8,
       cz + range * 1.0,
     )
+  }
+
+  /**
+   * Update a single rocket for interactive mode.
+   * Creates the rocket if it doesn't exist.
+   */
+  updateSingleRocket(
+    position: [number, number, number],
+    orientation: [number, number, number, number],
+    thrustBody: [number, number, number],
+    onGround: boolean,
+  ): void {
+    const LIVE_KEY = '__live__'
+    let rocket = this.rockets.get(LIVE_KEY)
+
+    if (!rocket) {
+      // Create rocket for live mode
+      const color = '#4f4'
+      const rocketLen = 4.0
+      const bodyRadius = 0.2
+      const hexColor = parseInt(color.replace('#', ''), 16)
+
+      const group = new THREE.Group()
+
+      // Body
+      const bodyGeo = new THREE.CylinderGeometry(bodyRadius, bodyRadius, rocketLen, 16)
+      bodyGeo.translate(0, rocketLen / 2, 0)
+      const bodyMat = new THREE.MeshBasicMaterial({ color: hexColor })
+      const body = new THREE.Mesh(bodyGeo, bodyMat)
+      group.add(body)
+
+      // Nose cone
+      const noseGeo = new THREE.ConeGeometry(bodyRadius, rocketLen * 0.2, 16)
+      noseGeo.translate(0, rocketLen + rocketLen * 0.1, 0)
+      const noseMat = new THREE.MeshBasicMaterial({ color: 0xffffff })
+      const nose = new THREE.Mesh(noseGeo, noseMat)
+      group.add(nose)
+
+      // Flame
+      const flameGeo = new THREE.ConeGeometry(bodyRadius * 1.5, rocketLen * 0.3, 8)
+      flameGeo.translate(0, -rocketLen * 0.15, 0)
+      const flameMat = new THREE.MeshBasicMaterial({
+        color: 0xff6600,
+        transparent: true,
+        opacity: 0.8,
+      })
+      const flame = new THREE.Mesh(flameGeo, flameMat)
+      flame.visible = false
+      group.add(flame)
+
+      this.scene.add(group)
+
+      // Empty trail (not used in live mode but required by type)
+      const trailGeo = new THREE.BufferGeometry()
+      const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial({ color: hexColor }))
+      const groundTrailGeo = new THREE.BufferGeometry()
+      const groundTrail = new THREE.Line(groundTrailGeo, new THREE.LineBasicMaterial({ color: 0xff0000 }))
+      const leaderLineGeo = new THREE.BufferGeometry()
+      const leaderLine = new THREE.Line(leaderLineGeo, new THREE.LineBasicMaterial({ color: hexColor }))
+
+      rocket = {
+        group,
+        body,
+        nose,
+        flame,
+        trail,
+        trailGeometry: trailGeo,
+        groundTrail,
+        groundTrailGeometry: groundTrailGeo,
+        color,
+        baseColor: new THREE.Color(hexColor),
+        annotations: [],
+        leaderLine,
+        leaderLineGeometry: leaderLineGeo,
+        wind: null,
+      }
+
+      this.rockets.set(LIVE_KEY, rocket)
+
+      // Setup initial camera - look at ground where rocket starts
+      this.controls.target.set(0, 5, 0)
+      this.camera.position.set(20, 15, 30)
+      this.controls.update()
+    }
+
+    // Update position
+    const [px, py, pz] = position
+    rocket.group.position.set(px, py, pz)
+
+    // Update orientation
+    const [qw, qx, qy, qz] = orientation
+    const bodyQ = new THREE.Quaternion(qx, qy, qz, qw)
+    rocket.group.quaternion.copy(bodyQ).multiply(PRE_ROT)
+
+    // Update flame
+    const thrustMag = Math.hypot(thrustBody[0], thrustBody[1], thrustBody[2])
+    rocket.flame.visible = thrustMag > 10
+    if (rocket.flame.visible) {
+      const scale = 0.5 + (thrustMag / 2000) * 1.5
+      rocket.flame.scale.set(scale, scale, scale)
+    }
+
+    // Color feedback
+    if (onGround) {
+      (rocket.body.material as THREE.MeshBasicMaterial).color.setHex(0x44ff44)
+    } else {
+      (rocket.body.material as THREE.MeshBasicMaterial).color.copy(rocket.baseColor)
+    }
+
+    // Render
+    this.renderer.render(this.scene, this.camera)
+    this.labelRenderer.render(this.scene, this.camera)
   }
 }

@@ -621,3 +621,136 @@ body {
     border-top: 1px solid var(--border);
   }
 }
+
+/* ============================================================================
+   Interactive mode (live)
+   ============================================================================ */
+
+.live-badge {
+  background: #dc2626;
+  color: #fff;
+  padding: 1px 6px;
+  font-size: 9px;
+  letter-spacing: 1px;
+  margin-left: 8px;
+  animation: live-pulse 1.5s infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+#status {
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 1px;
+  flex: 1;
+}
+
+#status.connected { color: #22c55e; }
+#status.error { color: #dc2626; }
+
+#controls-overlay {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  font-size: 9px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  opacity: 0.6;
+}
+
+.ctrl-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ctrl-key {
+  display: inline-block;
+  min-width: 14px;
+  padding: 0 3px;
+  text-align: center;
+  border: 1px solid var(--border);
+  font-size: 8px;
+  color: var(--text-dim);
+}
+
+/* Live charts */
+
+.live-chart-slot {
+  flex: 1;
+  min-height: 80px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.live-chart-slot canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.gimbal-slot {
+  flex: 0 0 auto;
+  height: 140px;
+  min-height: 140px;
+}
+
+/* Telemetry panel */
+
+.telemetry-panel {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.telem-title {
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+#telem-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
+.telem-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+}
+
+.telem-label { color: var(--text-muted); }
+.telem-value { color: var(--text); font-variant-numeric: tabular-nums; }
+.telem-value.warn { color: #f59e0b; }
+.telem-value.error { color: #dc2626; }
+.telem-value.good { color: #22c55e; }
+
+/* Playback bar for interactive mode */
+
+#sim-time {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.time-label { color: var(--text-muted); }
+
+#time-value {
+  min-width: 50px;
+  color: var(--text);
+}
+
+.speed-label {
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
