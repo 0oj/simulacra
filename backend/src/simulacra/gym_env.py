@@ -193,13 +193,13 @@ class RocketHoverEnv(gym.Env):
         return Actuators(gimbal=gimbal, throttle=throttle)
 
     def _get_obs(self) -> np.ndarray:
-        """Extract observation from sensors."""
+        """Extract observation from sensors (realistic sensor suite)."""
         gps = self._sensors.GPS.read()  # Horizontal position (x, z)
         alt = self._sensors.Barometer.read()  # Altitude (y)
-        vel = self._sensors.VelocitySensor.read()
-        orient = self._sensors.OrientationSensor.read()
+        vel = self._sensors.VelocitySensor.read()  # TODO: replace with accel integration
+        orient = self._sensors.AttitudeEstimator.read()  # Fused orientation estimate
         omega = self._sensors.GyroSensor.read()
-        thrust = self._sensors.ThrustSensor.read()
+        thrust = self._sensors.ThrustSensor.read()  # TODO: replace with commanded thrust
 
         qw, qx, qy, qz = orient.as_array()
 
@@ -216,6 +216,7 @@ class RocketHoverEnv(gym.Env):
 
     def _get_tilt_angle(self) -> float:
         """Compute tilt angle from vertical (radians)."""
+        # Use ground truth for termination checks (not observation)
         orient = self._kernel.rocket.state.orientation
         # Nose direction in world frame
         nose_body = RocketVec3(1.0, 0.0, 0.0)
@@ -346,6 +347,9 @@ class RocketHoverEnv(gym.Env):
         self._actuators.set_time(self._time)
         self._actuators.step(self.dt)
         self._kernel.step(self.dt)
+
+        # Update attitude estimator (fuses accel + gyro + mag)
+        self._sensors.update_attitude_estimator(self.dt)
 
         self._time += self.dt
         self._step_count += 1
@@ -531,13 +535,13 @@ class RocketLandingEnv(gym.Env):
         return Actuators(gimbal=gimbal, throttle=throttle)
 
     def _get_obs(self) -> np.ndarray:
-        """Extract observation from sensors."""
+        """Extract observation from sensors (realistic sensor suite)."""
         gps = self._sensors.GPS.read()  # Horizontal position (x, z)
         alt = self._sensors.Barometer.read()  # Altitude (y)
-        vel = self._sensors.VelocitySensor.read()
-        orient = self._sensors.OrientationSensor.read()
+        vel = self._sensors.VelocitySensor.read()  # TODO: replace with accel integration
+        orient = self._sensors.AttitudeEstimator.read()  # Fused orientation estimate
         omega = self._sensors.GyroSensor.read()
-        thrust = self._sensors.ThrustSensor.read()
+        thrust = self._sensors.ThrustSensor.read()  # TODO: replace with commanded thrust
         fuel = self._sensors.FuelSensor.read()
 
         qw, qx, qy, qz = orient.as_array()
@@ -556,6 +560,7 @@ class RocketLandingEnv(gym.Env):
 
     def _get_tilt_angle(self) -> float:
         """Compute tilt angle from vertical (radians)."""
+        # Use ground truth for termination checks (not observation)
         orient = self._kernel.rocket.state.orientation
         nose_body = RocketVec3(1.0, 0.0, 0.0)
         nose_world = nose_body.to_world(orient)
@@ -729,6 +734,9 @@ class RocketLandingEnv(gym.Env):
         self._actuators.set_time(self._time)
         self._actuators.step(self.dt)
         self._kernel.step(self.dt)
+
+        # Update attitude estimator (fuses accel + gyro + mag)
+        self._sensors.update_attitude_estimator(self.dt)
 
         self._time += self.dt
         self._step_count += 1
