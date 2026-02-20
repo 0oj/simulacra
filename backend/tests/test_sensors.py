@@ -20,6 +20,9 @@ from simulacra.phenomena.sensors import (
     Sensors,
     ThrustSensor,
     VelocitySensor,
+    Accelerometer,
+    Magnetometer,
+    Barometer,
 )
 from simulacra.phenomena.errors import (
     Bias,
@@ -444,3 +447,190 @@ class TestSensorErrorsWithScenario:
         assert sensors._time == pytest.approx(0.1)
         # Scenario._time has advanced past the sensor time
         assert scenario._time == pytest.approx(0.2)
+
+
+class TestAccelerometer:
+    """Tests for Accelerometer sensor (BMI088/MPU6050 style)."""
+
+    def test_measures_thrust_when_thrusting(self, kernel):
+        """When thrusting, accelerometer reads thrust/mass in body frame."""
+        accel = Accelerometer(kernel)
+        reading = accel.read()
+
+        # Kernel has thrust_body = (5000, 0, 0), mass = 1000
+        # Expected acceleration ≈ 5 m/s² along body X
+        assert reading.x == pytest.approx(5.0, rel=0.1)
+        assert reading.y == pytest.approx(0.0, abs=0.1)
+        assert reading.z == pytest.approx(0.0, abs=0.1)
+
+    def test_reads_gravity_when_stationary_on_ground(self):
+        """On ground with no thrust, reads normal force (opposite gravity)."""
+        from simulacra.noumena.rocket import get_upright_orientation
+
+        props = RocketProps(
+            length=10.0,
+            mass=1000.0,
+            center_of_mass_offset=RocketVec3(5.0, 0.0, 0.0),
+            inertia_diag=(100.0, 1000.0, 1000.0),
+            thrust_application_offset=RocketVec3(0.0, 0.0, 0.0),
+        )
+        state = RocketState(
+            position=WorldVec3(0.0, 0.0, 0.0),  # On ground
+            velocity=WorldVec3(0.0, 0.0, 0.0),
+            orientation=get_upright_orientation(),  # Upright
+            angular_velocity_body=RocketVec3(0.0, 0.0, 0.0),
+            thrust_body=RocketVec3(0.0, 0.0, 0.0),  # No thrust
+        )
+        rocket = Rocket(props, state)
+        env = Environment()
+        kernel = Kernel(rocket, env)
+        kernel.ground_contact.on_ground = True  # Simulate ground contact
+
+        accel = Accelerometer(kernel)
+        reading = accel.read()
+
+        # Upright rocket: body +X points world +Y (up)
+        # Normal force is +9.81 in world +Y, which maps to body +X
+        assert reading.x == pytest.approx(9.81, rel=0.01)
+        assert reading.y == pytest.approx(0.0, abs=0.1)
+        assert reading.z == pytest.approx(0.0, abs=0.1)
+
+    def test_per_channel_bias(self, kernel):
+        """Per-channel errors apply correctly."""
+        accel = Accelerometer(
+            kernel,
+            errors={
+                "x": Bias(offset=0.5),
+                "y": Bias(offset=-0.3),
+            },
+        )
+        reading = accel.read()
+
+        # Expect thrust/mass + bias on x
+        assert reading.x == pytest.approx(5.5, rel=0.1)
+        assert reading.y == pytest.approx(-0.3, abs=0.1)
+
+
+class TestMagnetometer:
+    """Tests for Magnetometer sensor."""
+
+    def test_default_field_identity_orientation(self, kernel):
+        """With identity orientation, body frame == world frame."""
+        # Kernel fixture has identity orientation
+        mag = Magnetometer(kernel)
+        reading = mag.read()
+
+        # Default field is (0, -0.5, -0.866) in world frame
+        # With identity orientation, body frame equals world frame
+        assert reading.x == pytest.approx(0.0, abs=0.01)
+        assert reading.y == pytest.approx(-0.5, abs=0.01)
+        assert reading.z == pytest.approx(-0.866, abs=0.01)
+
+    def test_field_rotates_with_orientation(self):
+        """Magnetic field reading changes with rocket orientation."""
+        from simulacra.noumena.rocket import get_upright_orientation
+
+        props = RocketProps(
+            length=10.0,
+            mass=1000.0,
+            center_of_mass_offset=RocketVec3(5.0, 0.0, 0.0),
+            inertia_diag=(100.0, 1000.0, 1000.0),
+            thrust_application_offset=RocketVec3(0.0, 0.0, 0.0),
+        )
+        state = RocketState(
+            position=WorldVec3(0.0, 50.0, 0.0),
+            velocity=WorldVec3(0.0, 0.0, 0.0),
+            orientation=get_upright_orientation(),
+            angular_velocity_body=RocketVec3(0.0, 0.0, 0.0),
+            thrust_body=RocketVec3(0.0, 0.0, 0.0),
+        )
+        rocket = Rocket(props, state)
+        env = Environment()
+        kernel = Kernel(rocket, env)
+
+        mag = Magnetometer(kernel)
+        reading = mag.read()
+
+        # Upright: body +X points world +Y, body +Y points world -X
+        # World field (0, -0.5, -0.866) should map differently
+        # Body X ← World Y component: -0.5
+        # Body Y ← World -X component: 0
+        # Body Z ← World Z component: -0.866
+        assert reading.x == pytest.approx(-0.5, abs=0.01)
+        assert reading.z == pytest.approx(-0.866, abs=0.01)
+
+    def test_custom_world_field(self, kernel):
+        """Can configure different magnetic field."""
+        custom_field = WorldVec3(1.0, 0.0, 0.0)  # Pure X
+        mag = Magnetometer(kernel, world_field=custom_field)
+        reading = mag.read()
+
+        # Identity orientation: body == world
+        assert reading.x == pytest.approx(1.0, abs=0.01)
+        assert reading.y == pytest.approx(0.0, abs=0.01)
+        assert reading.z == pytest.approx(0.0, abs=0.01)
+
+
+class TestBarometer:
+    """Tests for Barometer altitude sensor."""
+
+    def test_default_returns_altitude(self, kernel):
+        """Reads altitude (y position) by default."""
+        baro = Barometer(kernel)
+        reading = baro.read()
+
+        # Kernel fixture has position.y = 200.0
+        assert reading == pytest.approx(200.0)
+
+    def test_with_bias(self, kernel):
+        """Altitude bias (e.g., pressure offset) applies."""
+        baro = Barometer(
+            kernel,
+            errors={"altitude": Bias(offset=-5.0)},  # Reads 5m low
+        )
+        reading = baro.read()
+
+        assert reading == pytest.approx(195.0)
+
+    def test_with_noise(self, kernel):
+        """Altitude noise (e.g., pressure fluctuation) applies."""
+        baro = Barometer(
+            kernel,
+            errors={"altitude": GaussianNoise(std=0.5, seed=42)},
+        )
+        reading = baro.read()
+
+        # Should be close to 200 but not exact
+        assert reading != 200.0
+        assert abs(reading - 200.0) < 3.0  # Within 3 sigma
+
+
+class TestRealisticSensorBundle:
+    """Tests for realistic sensor integration in the Sensors bundle."""
+
+    def test_realistic_sensors_available(self, kernel):
+        """All realistic sensors are accessible."""
+        sensors = Sensors(kernel)
+
+        # Should have all realistic sensors
+        assert hasattr(sensors, 'Accelerometer')
+        assert hasattr(sensors, 'Magnetometer')
+        assert hasattr(sensors, 'Barometer')
+
+        # And they should be readable
+        accel = sensors.Accelerometer.read()
+        mag = sensors.Magnetometer.read()
+        baro = sensors.Barometer.read()
+
+        assert isinstance(accel, RocketVec3)
+        assert isinstance(mag, RocketVec3)
+        assert isinstance(baro, float)
+
+    def test_time_propagates_to_new_sensors(self, kernel):
+        """set_time updates all sensors including new ones."""
+        sensors = Sensors(kernel)
+        sensors.set_time(3.14)
+
+        assert sensors.Accelerometer._time == 3.14
+        assert sensors.Magnetometer._time == 3.14
+        assert sensors.Barometer._time == 3.14
