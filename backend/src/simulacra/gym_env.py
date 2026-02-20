@@ -22,6 +22,7 @@ from .noumena import (
     MassModel,
     get_upright_orientation,
 )
+from .noumena.mass_model import MassComponent, FuelComponent
 from .phenomena.actuators import (
     Actuators,
     GimbalActuator,
@@ -367,4 +368,390 @@ class RocketHoverEnv(gym.Env):
 
     def close(self):
         """Clean up resources."""
+        pass
+
+
+class RocketLandingEnv(gym.Env):
+    """
+    Gymnasium environment for VTVL rocket landing.
+
+    Observation (15-dim):
+        [x, y, z, vx, vy, vz, qw, qx, qy, qz, wx, wy, wz, thrust_mag, fuel_frac]
+
+    Action (3-dim, continuous):
+        [throttle, gimbal_outer, gimbal_inner]
+        - throttle: 0 to 1 (scaled to max_thrust)
+        - gimbal_outer: -1 to 1 (scaled to max_outer_angle)
+        - gimbal_inner: -1 to 1 (scaled to max_inner_angle)
+
+    Task: Land softly from altitude with upright attitude.
+    Success: on_ground with velocity < max_landing_speed and tilt < max_landing_tilt
+    """
+
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 50}
+
+    def __init__(
+        self,
+        dt: float = 0.02,
+        max_episode_steps: int = 1000,
+        # Rocket parameters
+        dry_mass: float = 60.0,
+        fuel_mass: float = 80.0,
+        length: float = 4.0,
+        max_thrust: float = 2000.0,
+        burn_rate: float = 4.0,  # kg/s at max thrust
+        max_gimbal_angle: float = 0.26,  # ~15 degrees
+        gimbal_rate_limit: float = 1.0,  # rad/s
+        # Initial condition ranges
+        init_altitude_range: Tuple[float, float] = (40.0, 60.0),
+        init_velocity_range: Tuple[float, float] = (-5.0, 0.0),  # downward
+        init_horizontal_range: Tuple[float, float] = (-5.0, 5.0),
+        init_tilt_range: Tuple[float, float] = (-0.15, 0.15),
+        init_fuel_range: Tuple[float, float] = (0.6, 1.0),  # fraction
+        # Landing thresholds (from Kernel.GroundContact)
+        max_landing_speed: float = 3.0,  # m/s
+        max_landing_tilt: float = 0.26,  # rad (~15 deg)
+        # Termination
+        max_tilt: float = 1.0,  # ~57 deg, terminate if exceeded mid-flight
+        max_altitude: float = 100.0,
+        render_mode: Optional[str] = None,
+    ):
+        super().__init__()
+
+        self.dt = dt
+        self.max_episode_steps = max_episode_steps
+
+        # Rocket config
+        self.dry_mass = dry_mass
+        self.fuel_mass = fuel_mass
+        self.length = length
+        self.max_thrust = max_thrust
+        self.burn_rate = burn_rate
+        self.max_gimbal_angle = max_gimbal_angle
+        self.gimbal_rate_limit = gimbal_rate_limit
+
+        # Initial conditions
+        self.init_altitude_range = init_altitude_range
+        self.init_velocity_range = init_velocity_range
+        self.init_horizontal_range = init_horizontal_range
+        self.init_tilt_range = init_tilt_range
+        self.init_fuel_range = init_fuel_range
+
+        # Landing thresholds
+        self.max_landing_speed = max_landing_speed
+        self.max_landing_tilt = max_landing_tilt
+
+        # Termination
+        self.max_tilt = max_tilt
+        self.max_altitude = max_altitude
+
+        self.render_mode = render_mode
+
+        # Action space: [throttle, gimbal_outer, gimbal_inner]
+        self.action_space = spaces.Box(
+            low=np.array([0.0, -1.0, -1.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
+        )
+
+        # Observation space: [pos(3), vel(3), quat(4), omega(3), thrust(1), fuel(1)]
+        obs_low = np.array(
+            [
+                -100, -10, -100,     # position
+                -50, -50, -50,       # velocity
+                -1, -1, -1, -1,      # quaternion
+                -10, -10, -10,       # angular velocity
+                0,                   # thrust
+                0,                   # fuel fraction
+            ],
+            dtype=np.float32,
+        )
+        obs_high = np.array(
+            [
+                100, 150, 100,       # position
+                50, 50, 50,          # velocity
+                1, 1, 1, 1,          # quaternion
+                10, 10, 10,          # angular velocity
+                max_thrust,          # thrust
+                1,                   # fuel fraction
+            ],
+            dtype=np.float32,
+        )
+        self.observation_space = spaces.Box(low=obs_low, high=obs_high)
+
+        # Initialized in reset()
+        self._kernel: Optional[Kernel] = None
+        self._sensors: Optional[Sensors] = None
+        self._actuators: Optional[Actuators] = None
+        self._step_count: int = 0
+        self._time: float = 0.0
+
+    def _make_rocket(self, init_state: RocketState, fuel_fraction: float) -> Rocket:
+        """Create rocket with fuel model."""
+        mass_model = MassModel(components=[
+            MassComponent("dry", self.dry_mass, RocketVec3(self.length / 2, 0, 0)),
+            FuelComponent(
+                "fuel",
+                mass=self.fuel_mass * fuel_fraction,
+                position=RocketVec3(self.length * 0.3, 0, 0),
+                full_mass=self.fuel_mass,
+                burn_rate=self.burn_rate,
+            ),
+        ])
+
+        props = mass_model.to_rocket_props(
+            length=self.length,
+            thrust_application_offset=RocketVec3(0, 0, 0),
+        )
+
+        return Rocket(props=props, state=init_state, mass_model=mass_model)
+
+    def _make_environment(self) -> Environment:
+        """Create world environment."""
+        return Environment(
+            gravity=WorldVec3(0.0, -9.81, 0.0),
+            wind=WorldVec3(0.0, 0.0, 0.0),
+            air_density=1.225,
+        )
+
+    def _make_actuators(self, rocket: Rocket) -> Actuators:
+        """Create actuator bundle."""
+        gimbal = GimbalActuator(
+            rocket=rocket,
+            max_outer_angle=self.max_gimbal_angle,
+            max_inner_angle=self.max_gimbal_angle,
+            max_rate=self.gimbal_rate_limit,
+            tau=0.05,
+        )
+        throttle = ThrottleActuator(
+            rocket=rocket,
+            max_thrust_rate=self.max_thrust * 2,
+            min_thrust=0.0,
+        )
+        return Actuators(gimbal=gimbal, throttle=throttle)
+
+    def _get_obs(self) -> np.ndarray:
+        """Extract observation from sensors."""
+        pos = self._sensors.GPS.read()
+        vel = self._sensors.VelocitySensor.read()
+        orient = self._sensors.OrientationSensor.read()
+        omega = self._sensors.GyroSensor.read()
+        thrust = self._sensors.ThrustSensor.read()
+        fuel = self._sensors.FuelSensor.read()
+
+        qw, qx, qy, qz = orient.as_array()
+
+        return np.array(
+            [
+                pos.x, pos.y, pos.z,
+                vel.x, vel.y, vel.z,
+                qw, qx, qy, qz,
+                omega.x, omega.y, omega.z,
+                thrust,
+                fuel,
+            ],
+            dtype=np.float32,
+        )
+
+    def _get_tilt_angle(self) -> float:
+        """Compute tilt angle from vertical (radians)."""
+        orient = self._kernel.rocket.state.orientation
+        nose_body = RocketVec3(1.0, 0.0, 0.0)
+        nose_world = nose_body.to_world(orient)
+        cos_angle = max(-1.0, min(1.0, nose_world.y))
+        return math.acos(cos_angle)
+
+    def _compute_reward(self, action: np.ndarray) -> Tuple[float, dict]:
+        """
+        Compute reward for landing task.
+
+        Reward shaping:
+        - Penalty for distance from target (0, 0)
+        - Penalty for altitude (encourages descent)
+        - Penalty for high velocity (encourages controlled descent)
+        - Penalty for tilt (encourages upright)
+        - Small penalty for fuel use (encourages efficiency)
+        - Large bonus for successful landing at target
+        - Large penalty for crash
+        """
+        state = self._kernel.rocket.state
+        ground = self._kernel.ground_contact
+        tilt = self._get_tilt_angle()
+        vel_mag = state.velocity.norm
+        alt = state.position.y
+        # Horizontal distance from landing target (0, 0)
+        horiz_dist = math.hypot(state.position.x, state.position.z)
+
+        reward = 0.0
+        info = {}
+
+        if ground.on_ground:
+            if ground.crashed or ground.tipped_over:
+                # Crash penalty
+                reward = -100.0
+                info["outcome"] = "crash"
+            else:
+                # Successful landing bonus
+                landing_vel = vel_mag
+                landing_tilt = tilt
+                # Score components: velocity, tilt, and position accuracy
+                vel_score = max(0, 1 - landing_vel / self.max_landing_speed)
+                tilt_score = max(0, 1 - landing_tilt / self.max_landing_tilt)
+                # Position score: full points within 1m, decreasing beyond
+                pos_score = max(0, 1 - horiz_dist / 10.0)
+                reward = 100.0 * vel_score * tilt_score * (0.5 + 0.5 * pos_score)
+                info["outcome"] = "landed"
+                info["landing_vel"] = landing_vel
+                info["landing_tilt"] = math.degrees(landing_tilt)
+                info["landing_dist"] = horiz_dist
+        else:
+            # Shaping reward during flight
+            # Reward for being closer to ground
+            alt_reward = -0.01 * alt
+
+            # Penalty for horizontal distance from target
+            horiz_penalty = -0.005 * horiz_dist
+
+            # Penalty for high velocity (quadratic)
+            vel_penalty = -0.001 * vel_mag**2
+
+            # Penalty for tilt (quadratic)
+            tilt_penalty = -0.1 * tilt**2
+
+            # Small fuel penalty (encourages efficiency)
+            fuel_penalty = -0.01 * action[0]  # throttle
+
+            reward = alt_reward + horiz_penalty + vel_penalty + tilt_penalty + fuel_penalty
+
+        return reward, info
+
+    def _check_termination(self) -> Tuple[bool, bool]:
+        """Check if episode should terminate."""
+        state = self._kernel.rocket.state
+        ground = self._kernel.ground_contact
+
+        truncated = self._step_count >= self.max_episode_steps
+
+        terminated = False
+
+        # Landed (success or crash)
+        if ground.on_ground:
+            terminated = True
+
+        # Excessive tilt mid-flight
+        if self._get_tilt_angle() > self.max_tilt:
+            terminated = True
+
+        # Out of fuel
+        if self._kernel.rocket.mass_model.fuel_fraction <= 0:
+            terminated = True
+
+        # Out of bounds (too high)
+        if state.position.y > self.max_altitude:
+            terminated = True
+
+        return terminated, truncated
+
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[dict] = None,
+    ) -> Tuple[np.ndarray, dict]:
+        """Reset environment to initial state."""
+        super().reset(seed=seed)
+
+        # Sample initial conditions
+        init_alt = self.np_random.uniform(*self.init_altitude_range)
+        init_vy = self.np_random.uniform(*self.init_velocity_range)
+        init_vx = self.np_random.uniform(*self.init_horizontal_range) * 0.1
+        init_vz = self.np_random.uniform(*self.init_horizontal_range) * 0.1
+        init_x = self.np_random.uniform(*self.init_horizontal_range)
+        init_z = self.np_random.uniform(*self.init_horizontal_range)
+        init_tilt_y = self.np_random.uniform(*self.init_tilt_range)
+        init_tilt_z = self.np_random.uniform(*self.init_tilt_range)
+        init_fuel = self.np_random.uniform(*self.init_fuel_range)
+
+        # Perturbed orientation
+        base_rot = get_upright_orientation()._as_scipy_rotation()
+        perturb_y = R.from_euler("y", init_tilt_y)
+        perturb_z = R.from_euler("z", init_tilt_z)
+        combined = perturb_z * perturb_y * base_rot
+        x, y, z, w = combined.as_quat()
+        init_orient = Orientation.from_wxyz(w, x, y, z)
+
+        init_state = RocketState(
+            position=WorldVec3(init_x, init_alt, init_z),
+            velocity=WorldVec3(init_vx, init_vy, init_vz),
+            orientation=init_orient,
+            angular_velocity_body=RocketVec3(0.0, 0.0, 0.0),
+            thrust_body=RocketVec3(0.0, 0.0, 0.0),
+        )
+
+        rocket = self._make_rocket(init_state, init_fuel)
+        environment = self._make_environment()
+
+        self._kernel = Kernel(rocket, environment)
+        self._sensors = Sensors(self._kernel)
+        self._actuators = self._make_actuators(rocket)
+
+        self._step_count = 0
+        self._time = 0.0
+
+        obs = self._get_obs()
+        info = {
+            "time": self._time,
+            "init_altitude": init_alt,
+            "init_fuel": init_fuel,
+        }
+
+        return obs, info
+
+    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, dict]:
+        """Execute one step in the environment."""
+        # Scale action
+        throttle = float(action[0]) * self.max_thrust
+        gimbal_outer = float(action[1]) * self.max_gimbal_angle
+        gimbal_inner = float(action[2]) * self.max_gimbal_angle
+
+        # Apply commands
+        self._actuators._throttle.apply(ThrottleCommand(thrust_N=throttle))
+        self._actuators._gimbal.apply(
+            GimbalCommand(
+                desired_outer_angle=gimbal_outer,
+                desired_inner_angle=gimbal_inner,
+            )
+        )
+
+        # Advance simulation
+        self._sensors.set_time(self._time)
+        self._actuators.set_time(self._time)
+        self._actuators.step(self.dt)
+        self._kernel.step(self.dt)
+
+        self._time += self.dt
+        self._step_count += 1
+
+        # Get outputs
+        obs = self._get_obs()
+        reward, reward_info = self._compute_reward(action)
+        terminated, truncated = self._check_termination()
+
+        pos = self._kernel.rocket.state.position
+        info = {
+            "time": self._time,
+            "altitude": pos.y,
+            "horiz_dist": math.hypot(pos.x, pos.z),
+            "velocity": self._kernel.rocket.state.velocity.norm,
+            "tilt_deg": math.degrees(self._get_tilt_angle()),
+            "fuel": self._kernel.rocket.mass_model.fuel_fraction,
+            "on_ground": self._kernel.ground_contact.on_ground,
+            **reward_info,
+        }
+
+        return obs, reward, terminated, truncated, info
+
+    def render(self):
+        pass
+
+    def close(self):
         pass

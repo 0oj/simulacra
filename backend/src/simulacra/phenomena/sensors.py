@@ -241,6 +241,29 @@ class VelocitySensor(Sensor):
         )
 
 
+class FuelSensor(Sensor):
+    """
+    Sensor that reads the remaining fuel fraction.
+
+    Channels: 'fraction' (0.0 = empty, 1.0 = full).
+    """
+
+    def __init__(
+        self,
+        kernel: Kernel,
+        errors: Optional[ChannelErrors] = None,
+    ):
+        self._kernel = kernel
+        self._errors = errors or _default_errors("fraction")
+        self._time: float = 0.0
+
+    def read(self) -> float:
+        """Read fuel fraction with error applied."""
+        truth = self._kernel.rocket.mass_model.fuel_fraction
+        t = self._time
+        return self._errors.get("fraction", _identity_error()).apply(truth, t)
+
+
 class Sensors:
     """
     Bundle of sensors attached to a kernel.
@@ -257,6 +280,7 @@ class Sensors:
         gyro_errors: Optional[ChannelErrors] = None,
         thrust_errors: Optional[ChannelErrors] = None,
         velocity_errors: Optional[ChannelErrors] = None,
+        fuel_errors: Optional[ChannelErrors] = None,
     ):
         self._kernel = kernel
         self._time: float = 0.0
@@ -267,6 +291,7 @@ class Sensors:
         self.GyroSensor = GyroSensor(self._kernel, gyro_errors)
         self.ThrustSensor = ThrustSensor(self._kernel, thrust_errors)
         self.VelocitySensor = VelocitySensor(self._kernel, velocity_errors)
+        self.FuelSensor = FuelSensor(self._kernel, fuel_errors)
 
         # Legacy combined IMU for backward compatibility
         self.IMU = IMU(self._kernel, orientation_errors, gyro_errors)
@@ -283,4 +308,5 @@ class Sensors:
         self.GyroSensor._time = t
         self.ThrustSensor._time = t
         self.VelocitySensor._time = t
+        self.FuelSensor._time = t
         self.IMU._set_time(t)

@@ -5,7 +5,7 @@ Tests for the Gymnasium environment wrapper.
 import numpy as np
 import pytest
 
-from simulacra.gym_env import RocketHoverEnv
+from simulacra.gym_env import RocketHoverEnv, RocketLandingEnv
 
 
 class TestRocketHoverEnv:
@@ -212,3 +212,157 @@ class TestRocketHoverEnvDomainRandomization:
         assert min(velocities) >= -3.5
         assert max(velocities) <= 3.5
         assert max(velocities) - min(velocities) > 1.0, "Should have variety in velocities"
+
+
+class TestRocketLandingEnv:
+    """Tests for RocketLandingEnv."""
+
+    def test_env_creation(self):
+        """Environment can be created with default params."""
+        env = RocketLandingEnv()
+        assert env is not None
+        assert env.observation_space.shape == (15,)  # +1 for fuel
+        assert env.action_space.shape == (3,)
+
+    def test_reset_returns_valid_obs(self):
+        """reset() returns observation within bounds."""
+        env = RocketLandingEnv()
+        obs, info = env.reset(seed=42)
+
+        assert obs.shape == (15,)
+        assert not np.any(np.isnan(obs)), "Observation contains NaN"
+        assert not np.any(np.isinf(obs)), "Observation contains Inf"
+        assert env.observation_space.contains(obs), "Observation out of bounds"
+        assert "init_altitude" in info
+        assert "init_fuel" in info
+
+    def test_initial_altitude(self):
+        """Rocket starts at altitude, not on ground."""
+        env = RocketLandingEnv(init_altitude_range=(40.0, 60.0))
+        obs, info = env.reset(seed=42)
+
+        altitude = obs[1]  # y position
+        assert altitude >= 35.0, "Should start at altitude"
+        assert altitude <= 65.0, "Should start within range"
+
+    def test_fuel_in_observation(self):
+        """Fuel fraction is included in observation."""
+        env = RocketLandingEnv()
+        obs, _ = env.reset(seed=42)
+
+        fuel = obs[14]  # last element
+        assert 0.0 <= fuel <= 1.0, "Fuel should be a fraction"
+
+    def test_step_consumes_fuel(self):
+        """Thrust consumes fuel over time."""
+        env = RocketLandingEnv()
+        obs, _ = env.reset(seed=42)
+        initial_fuel = obs[14]
+
+        # Full throttle for several steps
+        action = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        for _ in range(50):
+            obs, _, terminated, _, _ = env.step(action)
+            if terminated:
+                break
+
+        final_fuel = obs[14]
+        assert final_fuel < initial_fuel, "Fuel should decrease with thrust"
+
+    def test_landing_terminates(self):
+        """Episode terminates when rocket lands."""
+        env = RocketLandingEnv(
+            init_altitude_range=(10.0, 15.0),
+            init_velocity_range=(-1.0, 0.0),
+        )
+        env.reset(seed=42)
+
+        # No thrust - let it fall
+        action = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+
+        terminated = False
+        for _ in range(500):
+            obs, reward, terminated, truncated, info = env.step(action)
+            if terminated:
+                break
+
+        assert terminated, "Should terminate on landing/crash"
+        assert info.get("on_ground", False), "Should be on ground"
+
+    def test_soft_landing_positive_reward(self):
+        """Soft landing gives positive reward."""
+        env = RocketLandingEnv(
+            init_altitude_range=(5.0, 6.0),  # Start low
+            init_velocity_range=(0.0, 0.0),  # No initial velocity
+            init_tilt_range=(0.0, 0.0),  # Upright
+            init_horizontal_range=(0.0, 0.0),  # At target
+            init_fuel_range=(1.0, 1.0),
+        )
+        env.reset(seed=42)
+
+        # Controlled descent - throttle to slow down
+        total_reward = 0.0
+        for _ in range(500):
+            # Get altitude and adjust thrust
+            alt = env._kernel.rocket.state.position.y
+            vel_y = env._kernel.rocket.state.velocity.y
+
+            # Simple control: more thrust when falling fast, less when slow
+            if vel_y < -2.0:
+                throttle = 0.7
+            elif vel_y < -0.5:
+                throttle = 0.5
+            else:
+                throttle = 0.3
+
+            action = np.array([throttle, 0.0, 0.0], dtype=np.float32)
+            obs, reward, terminated, truncated, info = env.step(action)
+            total_reward += reward
+
+            if terminated:
+                break
+
+        # Check we landed successfully
+        assert info.get("outcome") == "landed", f"Should land successfully, got {info}"
+        assert info.get("landing_vel", 999) < 3.0, "Landing velocity should be low"
+
+    def test_crash_negative_reward(self):
+        """Crash gives large negative reward."""
+        env = RocketLandingEnv(
+            init_altitude_range=(30.0, 35.0),
+            init_velocity_range=(-10.0, -8.0),  # Fast downward
+        )
+        env.reset(seed=42)
+
+        # No thrust - let it crash
+        action = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+
+        final_reward = 0.0
+        for _ in range(500):
+            obs, reward, terminated, truncated, info = env.step(action)
+            final_reward = reward
+            if terminated:
+                break
+
+        assert info.get("outcome") == "crash", "Should crash"
+        assert final_reward < -50, "Crash should give large negative reward"
+
+    def test_horizontal_distance_tracked(self):
+        """Horizontal distance from target is tracked in info."""
+        env = RocketLandingEnv(
+            init_horizontal_range=(5.0, 10.0),  # Start away from target
+        )
+        env.reset(seed=42)
+
+        action = np.array([0.5, 0.0, 0.0], dtype=np.float32)
+        obs, reward, terminated, truncated, info = env.step(action)
+
+        assert "horiz_dist" in info
+        assert info["horiz_dist"] > 0, "Should have horizontal distance from target"
+
+    def test_gymnasium_compatibility(self):
+        """Environment passes gymnasium check_env validation."""
+        from gymnasium.utils.env_checker import check_env
+
+        env = RocketLandingEnv()
+        check_env(env, skip_render_check=True)
