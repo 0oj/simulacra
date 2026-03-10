@@ -39,7 +39,8 @@ class LandingControllerConfig:
     target_z: float = 0.0
 
     # Physical parameters
-    weight: float = 981.0  # N (mass * g)
+    dry_mass: float = 60.0  # kg (mass without fuel)
+    full_fuel_mass: float = 80.0  # kg (fuel when full)
     max_thrust: float = 2000.0  # N
     gravity: float = 9.81  # m/s^2
 
@@ -157,17 +158,27 @@ class LandingController(Controller):
         # Vertical: descent rate based on altitude
         # Higher altitude = faster descent allowed
         # v_descent = -k * sqrt(h) gives natural deceleration
+        #
+        # IMPORTANT: Smooth transition to terminal phase to avoid discontinuity
+        # At terminal altitude, sqrt profile gives: -k * sqrt(terminal_alt)
+        # We want to smoothly blend to terminal_descent_rate near ground
+
+        sqrt_velocity = -cfg.k_descent * math.sqrt(altitude)
 
         if altitude > cfg.terminal_altitude:
-            # Normal descent phase
-            vy_desired = -cfg.k_descent * math.sqrt(altitude)
+            # Normal descent phase: use sqrt profile
+            vy_desired = sqrt_velocity
         else:
-            # Terminal phase: constant slow descent
-            vy_desired = -cfg.terminal_descent_rate
+            # Terminal phase: blend between sqrt profile and terminal rate
+            # At terminal_altitude, blend = 0 (use sqrt)
+            # At ground (0), blend = 1 (use terminal rate)
+            blend = 1.0 - (altitude / cfg.terminal_altitude)
+            blend = max(0.0, min(1.0, blend))
+            vy_desired = (1.0 - blend) * sqrt_velocity + blend * (-cfg.terminal_descent_rate)
 
         # Very close to ground: even slower
-        if altitude < 1.0:
-            vy_desired = max(vy_desired, -0.5)
+        if altitude < 0.5:
+            vy_desired = max(vy_desired, -0.3)
 
         # === CONTROL: Compute desired acceleration ===
 
@@ -185,7 +196,12 @@ class LandingController(Controller):
 
         # The thrust must produce the desired acceleration PLUS cancel gravity
         # T_world = m * (a_desired + [0, g, 0])
-        mass = cfg.weight / cfg.gravity
+        #
+        # IMPORTANT: Use fuel sensor to estimate current mass dynamically
+        # This prevents thrust overshoot as fuel burns
+        fuel_fraction = self.sensors.FuelSensor.read()
+        current_fuel_mass = fuel_fraction * cfg.full_fuel_mass
+        mass = cfg.dry_mass + current_fuel_mass
 
         # Thrust vector in world frame
         Tx = mass * ax_desired
