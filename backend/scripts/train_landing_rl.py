@@ -169,46 +169,70 @@ class GlideRewardWrapper(gym.Wrapper):
         tilt = 2.0 * math.acos(min(1.0, abs(qw)))
         omega = math.sqrt(wx**2 + wy**2 + wz**2)
         v_horiz = math.sqrt(vx**2 + vz**2)
+        speed = math.sqrt(vy**2 + vx**2 + vz**2)
 
         outcome = info.get("outcome")
 
-        # Terminal rewards
+        # Terminal rewards — large to dominate over shaping
         if outcome == "landed":
             vel = info.get("landing_vel", 3.0)
             landing_tilt = math.radians(info.get("landing_tilt", 15.0))
-            return 100.0 + 50.0 * max(0, 1 - vel / 3) + 20.0 * max(0, 1 - landing_tilt / 0.26)
+            return 200.0 + 50.0 * max(0, 1 - vel / 3) + 20.0 * max(0, 1 - landing_tilt / 0.26)
 
         if outcome == "crash":
-            return -50.0
+            return -200.0
 
         if terminated and outcome is None:
             # Tilt/fuel/altitude termination
-            return -30.0
+            return -100.0
 
         if truncated:
-            # Timeout — penalize remaining altitude (should have descended)
-            return -5.0 - 0.1 * alt
+            # Timeout — penalize remaining altitude
+            return -50.0 - 0.5 * alt
 
         # Dense shaping during flight
-        # Target descent rate: glide path profile
-        k = 1.5
-        if alt > 3.0:
-            target_vy = -k * math.sqrt(max(0.1, alt))
-        elif alt > 0.5:
-            target_vy = max(-k * math.sqrt(alt), -1.0)
-        else:
-            target_vy = -0.3
+        #
+        # Key insight: penalize going TOO FAST (one-sided), not deviation
+        # from a specific profile. This avoids rewarding free-fall.
+        #
+        # Max safe speed is a function of altitude (can we still stop?):
+        #   stopping_dist = v² / (2 * max_decel)
+        #   max_decel ≈ (max_thrust / mass) - g ≈ (2000/120) - 9.81 ≈ 6.85 m/s²
+        #   With safety margin (60% authority): effective_decel ≈ 4.0
+        #
+        # So max safe |vy| at altitude h: sqrt(2 * 4.0 * h) = 2.83 * sqrt(h)
+        # We use a gentler target for the reward.
 
-        # Glide path error (most important signal)
-        glide_error = abs(vy - target_vy)
+        max_decel = 4.0  # conservative m/s²
+        max_safe_vy = math.sqrt(2 * max_decel * max(0.1, alt))
+
+        # Penalty for descending too fast relative to altitude
+        excess_speed = max(0.0, abs(vy) - max_safe_vy)
+        speed_penalty = -0.5 * excess_speed ** 2
+
+        # Reward for descending (progress toward ground)
+        # Negative vy means descending — reward proportional to descent rate
+        # but only up to a safe speed
+        descent_reward = 0.0
+        if vy < 0:
+            safe_vy = min(abs(vy), max_safe_vy)
+            descent_reward = 0.02 * safe_vy  # reward descending safely
+
+        # Near ground: reward slow approach
+        if alt < 2.0:
+            # Want vy between -1.5 and 0
+            if -1.5 < vy < 0:
+                descent_reward += 0.1  # bonus for controlled approach
+            elif vy < -3.0:
+                speed_penalty -= 0.5  # extra penalty for coming in hot
 
         return (
-            + 0.05                        # alive bonus
-            - 0.10 * glide_error          # follow glide path
-            - 0.15 * tilt ** 2            # stay upright (quadratic)
-            - 0.05 * omega                # angular velocity damping
+            + 0.02                        # alive bonus (small)
+            + descent_reward              # reward controlled descent
+            + speed_penalty               # penalize going too fast
+            - 0.10 * tilt ** 2            # stay upright
+            - 0.03 * omega                # angular velocity damping
             - 0.01 * v_horiz              # minimize horizontal drift
-            - 0.002 * alt                 # progress toward ground
         )
 
 
