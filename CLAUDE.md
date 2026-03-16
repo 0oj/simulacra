@@ -107,7 +107,76 @@ Design interfaces as precise, didactic technical diagrams rather than decorative
 
 Timeless, slightly archival. Should feel like a future technical manual or a very good one from 1975.
 
+## RL Training Pipeline
+
+### Current Architecture: GuidanceWrapper
+
+The RL agent outputs 3-dim actions `[throttle, tilt_x, tilt_z]`. An inner PD controller (`LandingController.attitude_law`) converts tilt commands into gimbal angles. This decouples "what direction to point" from "how to achieve that attitude."
+
+### Observation Space
+
+Base: 13-dim `[x, baro_y, z, vx, vy, vz, qw, qx, qy, qz, wx, wy, wz]`
+Physics features are appended via `FeatureWrapper` or `PhysicsFeatureWrapper`.
+
+### Feature Catalogue
+
+| ID | Name | Formula | When Useful |
+|----|------|---------|-------------|
+| F1 | `sqrt_y` | √y | Descent velocity scale |
+| F2 | `decel_required` | vy²/(2y) | Near ground only |
+| F3 | `horiz_dist` | √(x²+z²) | All altitudes |
+| F4 | `glide_slope` | horiz_dist/y | Mid-altitude |
+| F5 | `brake_margin` | y - vy²/(2·a_max) | **All altitudes** — key for brake timing |
+| F6 | `vel_error` | vy + k·√y | **All altitudes** — control error signal |
+| F7 | `nose_y` | 2(qw·qy + qx·qz) | Uprightness |
+| F8 | `horiz_speed` | √(vx²+vz²) | Redundant |
+| F9 | `specific_energy` | vy²/2 + g·y | Energy budget |
+
+Constants: `a_max=4.0`, `k_descent=2.0`, `g=9.81`
+
+### Training Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/train_guidance_v3_features.py` | Original 4-feature training (baseline) |
+| `scripts/train_guidance_v3_bignet.py` | No-features, 256×256 net (capacity baseline) |
+| `scripts/train_feature_ablation.py {A\|B\|C\|D}` | Feature ablation study |
+| `scripts/train_dr.py` | DR training: features + bigger net + physics randomization |
+
+### Curriculum (3 stages, identical across experiments)
+
+| Stage | Alt | Vel | Horiz | Tilt | Steps |
+|-------|-----|-----|-------|------|-------|
+| 1 | 5-80m | -9 to 0 | ±7m | ±0.17 | 2M |
+| 2 | 5-130m | -12 to 0 | ±12m | ±0.25 | 2.5M |
+| 3 | 5-200m | -15 to 0 | ±20m | ±0.30 | 3.5M |
+
+### Experiment Results
+
+### Domain Randomization
+
+`DomainRandomization` dataclass in `gym_env.py` — pass to `RocketLandingEnvV2(domain_randomization=...)`.
+Each episode samples new physics, actuator, and sensor parameters:
+
+- **Physics**: mass, thrust, burn_rate, length (multiplicative scale)
+- **Actuators**: gimbal rate limit, gimbal lag tau (multiplicative scale)
+- **Environment**: wind (direction + magnitude), gravity, air density
+- **Sensors**: GPS noise, baro noise, velocity noise, orientation noise, gyro noise + bias
+
+DR params are logged in `info["dr_params"]` from `reset()` and in `ConstantMessage` for NDJSON replay.
+
+### Experiment Results
+
+Results saved to `backend/runs/`. Each run contains:
+- `config.json` — hyperparameters and feature list
+- `results.jsonl` — structured eval results per stage
+- `training_log_stage{N}.jsonl` — per-minute training dynamics
+- `tensorboard/` — training curves
+- `checkpoints/` — periodic model snapshots
+
+Comprehensive study design: `backend/docs/feature_ablation_study.md`
+
 ## Dependencies
 
-- **Backend**: Python >=3.13, numpy, scipy, matplotlib, pydantic
+- **Backend**: Python >=3.13, numpy, scipy, matplotlib, pydantic, stable-baselines3, gymnasium
 - **Frontend**: Node.js 22.19.0, Three.js, TypeScript, Vite

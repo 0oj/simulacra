@@ -145,18 +145,31 @@ export class App {
 
     for (const file of files) {
       try {
-        // Try /output/ path first (proxied to output directory)
-        let url = `/output/${file}`
-        let response = await fetch(url)
+        let response: Response | null = null
+        let url = ''
 
-        // If not found in output dir, try as absolute path via /@fs/
-        if (!response.ok && file.startsWith('/')) {
-          url = `/@fs${file}`
-          response = await fetch(url)
+        // Try paths in order:
+        // 1. /output/ (proxied to /tmp/simulacra - primary location)
+        // 2. /episodes/ (bundled static assets in public/)
+        // 3. /@fs/ (absolute path via Vite)
+        const pathsToTry = [
+          `/output/${file}`,
+          `/episodes/${file}`,
+        ]
+
+        // Also try absolute path if file starts with /
+        if (file.startsWith('/')) {
+          pathsToTry.push(`/@fs${file}`)
         }
 
-        if (!response.ok) {
-          console.warn(`Failed to load ${file}: ${response.status}`)
+        for (const path of pathsToTry) {
+          url = path
+          response = await fetch(url)
+          if (response.ok) break
+        }
+
+        if (!response?.ok) {
+          console.warn(`Failed to load ${file}: not found in any location`)
           continue
         }
 

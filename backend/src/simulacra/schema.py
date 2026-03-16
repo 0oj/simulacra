@@ -142,6 +142,45 @@ class ConstantMessage(BaseMessage):
         description="Air density (kg/m^3).",
     )
 
+    # Domain randomization: actuator parameters
+    gimbal_rate_limit: Optional[float] = Field(
+        default=None,
+        description="Gimbal actuator max rate (rad/s) for this episode.",
+    )
+    gimbal_tau: Optional[float] = Field(
+        default=None,
+        description="Gimbal actuator first-order lag time constant (seconds).",
+    )
+
+    # Domain randomization: sensor error configuration
+    # These record the noise/bias settings for this episode, so that during
+    # replay the frontend can show truth vs. perceived values and understand
+    # the error model that was active.
+    sensor_gps_noise_std: Optional[float] = Field(
+        default=None,
+        description="GPS noise standard deviation (meters) for this episode.",
+    )
+    sensor_baro_noise_std: Optional[float] = Field(
+        default=None,
+        description="Barometer noise standard deviation (meters) for this episode.",
+    )
+    sensor_velocity_noise_std: Optional[float] = Field(
+        default=None,
+        description="Velocity sensor noise standard deviation (m/s) for this episode.",
+    )
+    sensor_orientation_noise_std: Optional[float] = Field(
+        default=None,
+        description="Orientation sensor noise standard deviation (radians) for this episode.",
+    )
+    sensor_gyro_noise_std: Optional[float] = Field(
+        default=None,
+        description="Gyroscope noise standard deviation (rad/s) for this episode.",
+    )
+    sensor_gyro_bias: Optional[float] = Field(
+        default=None,
+        description="Gyroscope bias magnitude (rad/s), constant per episode.",
+    )
+
 
 class VariableMessage(BaseMessage):
     """Variable message - dynamic state and sensor data that changes over time."""

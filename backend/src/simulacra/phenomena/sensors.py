@@ -660,11 +660,16 @@ class Sensors:
         self.FuelSensor = FuelSensor(self._kernel, fuel_errors)
 
         # Attitude estimator (fuses accel + gyro + mag using complementary filter)
+        # Initialize with ground truth orientation to simulate pre-launch calibration.
+        # Without this, the estimator starts at identity and takes seconds to converge
+        # because the accelerometer reads ~0 during initial free-fall.
+        initial_orientation = kernel.rocket.state.orientation
         self.AttitudeEstimator = AttitudeEstimator(
             accelerometer=self.Accelerometer,
             gyro=self.GyroSensor,
             magnetometer=self.Magnetometer,
             alpha=attitude_alpha,
+            initial_orientation=initial_orientation,
         )
 
         # Legacy/convenience sensors (abstract away sensor fusion)
