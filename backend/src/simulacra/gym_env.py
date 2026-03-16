@@ -5,6 +5,7 @@ Exposes the rocket simulation as a standard Gymnasium environment
 for RL training (SAC, PPO, SINDy-RL, etc.).
 """
 
+from dataclasses import dataclass, field
 from typing import Any, Optional, Tuple
 import math
 
@@ -31,6 +32,7 @@ from .phenomena.actuators import (
     ThrottleCommand,
 )
 from .phenomena.sensors import Sensors
+from .phenomena.errors import GaussianNoise, Bias, CompositeError
 from .physics import Orientation, RocketVec3, WorldVec3
 
 
@@ -197,7 +199,7 @@ class RocketHoverEnv(gym.Env):
         gps = self._sensors.GPS.read()  # Horizontal position (x, z)
         alt = self._sensors.Barometer.read()  # Altitude (y)
         vel = self._sensors.VelocitySensor.read()  # TODO: replace with accel integration
-        orient = self._sensors.AttitudeEstimator.read()  # Fused orientation estimate
+        orient = self._sensors.OrientationSensor.read()  # Ground truth + noise
         omega = self._sensors.GyroSensor.read()
         thrust = self._sensors.ThrustSensor.read()  # TODO: replace with commanded thrust
 
@@ -448,7 +450,12 @@ class RocketLandingEnv(gym.Env):
 
         # Termination
         self.max_tilt = max_tilt
-        self.max_altitude = max_altitude
+        # Auto-derive max_altitude from init range if using the default.
+        # Must be above the highest possible starting altitude.
+        if max_altitude == 100.0 and init_altitude_range[1] > 80.0:
+            self.max_altitude = init_altitude_range[1] * 1.5
+        else:
+            self.max_altitude = max_altitude
 
         self.render_mode = render_mode
 
@@ -459,21 +466,24 @@ class RocketLandingEnv(gym.Env):
         )
 
         # Observation space: [pos(3), vel(3), quat(4), omega(3)] = 13 dims
+        # Bounds scale with init range to avoid clipping at high altitudes/speeds
+        alt_bound = max(150.0, self.max_altitude * 1.2)
+        vel_bound = max(50.0, math.sqrt(2 * 9.81 * self.max_altitude) * 1.2)
         obs_low = np.array(
             [
-                -100, -10, -100,     # position (gps_x, baro_alt, gps_z)
-                -50, -50, -50,       # velocity
-                -1, -1, -1, -1,      # quaternion (from attitude estimator)
-                -10, -10, -10,       # angular velocity
+                -100, -10, -100,             # position (gps_x, baro_alt, gps_z)
+                -vel_bound, -vel_bound, -vel_bound,  # velocity
+                -1, -1, -1, -1,              # quaternion (from attitude estimator)
+                -10, -10, -10,               # angular velocity
             ],
             dtype=np.float32,
         )
         obs_high = np.array(
             [
-                100, 150, 100,       # position
-                50, 50, 50,          # velocity
-                1, 1, 1, 1,          # quaternion
-                10, 10, 10,          # angular velocity
+                100, alt_bound, 100,             # position (alt_bound scales with init range)
+                vel_bound, vel_bound, vel_bound, # velocity
+                1, 1, 1, 1,                      # quaternion
+                10, 10, 10,                      # angular velocity
             ],
             dtype=np.float32,
         )
@@ -545,7 +555,7 @@ class RocketLandingEnv(gym.Env):
         gps = self._sensors.GPS.read()  # Horizontal position (x, z)
         alt = self._sensors.Barometer.read()  # Altitude (y)
         vel = self._sensors.VelocitySensor.read()  # TODO: replace with accel integration
-        orient = self._sensors.AttitudeEstimator.read()  # Fused orientation estimate
+        orient = self._sensors.OrientationSensor.read()  # Ground truth + noise
         omega = self._sensors.GyroSensor.read()
 
         qw, qx, qy, qz = orient.as_array()
@@ -769,6 +779,54 @@ class RocketLandingEnv(gym.Env):
         pass
 
 
+@dataclass
+class DomainRandomization:
+    """
+    Per-episode randomization of physical parameters for robust RL training.
+
+    Motivated by Dresia (2025): without domain randomization, RL controllers
+    overfit to the training distribution and fail on real hardware. With DR,
+    the policy learns representations invariant to parameter variation.
+
+    Scale parameters are multiplicative: sampled_value = nominal * uniform(low, high).
+    Noise parameters specify the std dev range: std = uniform(low, high).
+    Default (1.0, 1.0) or (0.0, 0.0) means no randomization.
+
+    Example — moderate DR for landing:
+        DomainRandomization(
+            dry_mass_scale=(0.9, 1.1),      # ±10% mass
+            max_thrust_scale=(0.95, 1.05),   # ±5% thrust
+            gimbal_tau_scale=(0.7, 1.3),     # ±30% actuator lag
+            wind_speed_range=(0.0, 3.0),     # 0–3 m/s wind
+            gyro_noise_std=(0.0, 0.01),      # 0–0.01 rad/s gyro noise
+        )
+    """
+
+    # Rocket physics (multiplicative scale on nominal values)
+    dry_mass_scale: Tuple[float, float] = (1.0, 1.0)
+    fuel_mass_scale: Tuple[float, float] = (1.0, 1.0)
+    max_thrust_scale: Tuple[float, float] = (1.0, 1.0)
+    burn_rate_scale: Tuple[float, float] = (1.0, 1.0)
+    length_scale: Tuple[float, float] = (1.0, 1.0)
+
+    # Actuators (multiplicative scale)
+    gimbal_rate_scale: Tuple[float, float] = (1.0, 1.0)
+    gimbal_tau_scale: Tuple[float, float] = (1.0, 1.0)
+
+    # Environment
+    wind_speed_range: Tuple[float, float] = (0.0, 0.0)  # m/s, horizontal magnitude
+    gravity_scale: Tuple[float, float] = (1.0, 1.0)
+    air_density_scale: Tuple[float, float] = (1.0, 1.0)
+
+    # Sensor noise (std dev sampled uniformly from range)
+    gps_noise_std: Tuple[float, float] = (0.0, 0.0)        # meters
+    baro_noise_std: Tuple[float, float] = (0.0, 0.0)       # meters
+    velocity_noise_std: Tuple[float, float] = (0.0, 0.0)   # m/s
+    orientation_noise_std: Tuple[float, float] = (0.0, 0.0) # radians
+    gyro_noise_std: Tuple[float, float] = (0.0, 0.0)       # rad/s
+    gyro_bias_range: Tuple[float, float] = (0.0, 0.0)      # rad/s, constant per episode
+
+
 class RocketLandingEnvV2(gym.Env):
     """
     Improved gymnasium environment for VTVL rocket landing.
@@ -777,6 +835,7 @@ class RocketLandingEnvV2(gym.Env):
     - Additive terminal reward (not multiplicative)
     - Rebalanced flight penalties (no fuel penalty)
     - Better reward shaping for learning
+    - Optional domain randomization (DomainRandomization config)
 
     Observation (13-dim):
         [x, y, z, vx, vy, vz, qw, qx, qy, qz, wx, wy, wz]
@@ -819,6 +878,8 @@ class RocketLandingEnvV2(gym.Env):
         # Termination
         max_tilt: float = 1.0,  # ~57 deg, terminate if exceeded mid-flight
         max_altitude: float = 100.0,
+        # Domain randomization
+        domain_randomization: Optional[DomainRandomization] = None,
         render_mode: Optional[str] = None,
     ):
         super().__init__()
@@ -826,7 +887,7 @@ class RocketLandingEnvV2(gym.Env):
         self.dt = dt
         self.max_episode_steps = max_episode_steps
 
-        # Rocket config
+        # Nominal rocket config (DR samples around these values)
         self.dry_mass = dry_mass
         self.fuel_mass = fuel_mass
         self.length = length
@@ -848,7 +909,13 @@ class RocketLandingEnvV2(gym.Env):
 
         # Termination
         self.max_tilt = max_tilt
-        self.max_altitude = max_altitude
+        if max_altitude == 100.0 and init_altitude_range[1] > 80.0:
+            self.max_altitude = init_altitude_range[1] * 1.5
+        else:
+            self.max_altitude = max_altitude
+
+        # Domain randomization
+        self.domain_randomization = domain_randomization
 
         self.render_mode = render_mode
 
@@ -859,21 +926,24 @@ class RocketLandingEnvV2(gym.Env):
         )
 
         # Observation space: [pos(3), vel(3), quat(4), omega(3)] = 13 dims
+        # Bounds scale with init range to avoid clipping at high altitudes/speeds
+        alt_bound = max(150.0, self.max_altitude * 1.2)
+        vel_bound = max(50.0, math.sqrt(2 * 9.81 * self.max_altitude) * 1.2)
         obs_low = np.array(
             [
-                -100, -10, -100,     # position (gps_x, baro_alt, gps_z)
-                -50, -50, -50,       # velocity
-                -1, -1, -1, -1,      # quaternion (from attitude estimator)
-                -10, -10, -10,       # angular velocity
+                -100, -10, -100,             # position (gps_x, baro_alt, gps_z)
+                -vel_bound, -vel_bound, -vel_bound,  # velocity
+                -1, -1, -1, -1,              # quaternion (from attitude estimator)
+                -10, -10, -10,               # angular velocity
             ],
             dtype=np.float32,
         )
         obs_high = np.array(
             [
-                100, 150, 100,       # position
-                50, 50, 50,          # velocity
-                1, 1, 1, 1,          # quaternion
-                10, 10, 10,          # angular velocity
+                100, alt_bound, 100,             # position (alt_bound scales with init range)
+                vel_bound, vel_bound, vel_bound, # velocity
+                1, 1, 1, 1,                      # quaternion
+                10, 10, 10,                      # angular velocity
             ],
             dtype=np.float32,
         )
@@ -885,50 +955,189 @@ class RocketLandingEnvV2(gym.Env):
         self._actuators: Optional[Actuators] = None
         self._step_count: int = 0
         self._time: float = 0.0
+        self._ep_params: Optional[dict] = None  # Current episode's DR parameters
 
-    def _make_rocket(self, init_state: RocketState, fuel_fraction: float) -> Rocket:
-        """Create rocket with fuel model."""
+    def _sample_episode_params(self) -> dict:
+        """
+        Sample physical parameters for this episode.
+
+        If domain_randomization is None, returns nominal values.
+        Otherwise, scales each parameter by a uniform random factor.
+        All sampled values are stored in info for logging.
+        """
+        dr = self.domain_randomization
+        rng = self.np_random
+
+        if dr is None:
+            return {
+                "dry_mass": self.dry_mass,
+                "fuel_mass": self.fuel_mass,
+                "length": self.length,
+                "max_thrust": self.max_thrust,
+                "burn_rate": self.burn_rate,
+                "gimbal_rate": self.gimbal_rate_limit,
+                "gimbal_tau": 0.05,
+                "gravity": 9.81,
+                "air_density": 1.225,
+                "wind": WorldVec3(0.0, 0.0, 0.0),
+                "gps_noise_std": 0.0,
+                "baro_noise_std": 0.0,
+                "velocity_noise_std": 0.0,
+                "orientation_noise_std": 0.0,
+                "gyro_noise_std": 0.0,
+                "gyro_bias": 0.0,
+            }
+
+        # Wind: random horizontal direction, sampled magnitude
+        wind_speed = rng.uniform(*dr.wind_speed_range)
+        wind_angle = rng.uniform(0, 2 * math.pi)
+        wind = WorldVec3(
+            wind_speed * math.cos(wind_angle),
+            0.0,
+            wind_speed * math.sin(wind_angle),
+        )
+
+        return {
+            "dry_mass": self.dry_mass * rng.uniform(*dr.dry_mass_scale),
+            "fuel_mass": self.fuel_mass * rng.uniform(*dr.fuel_mass_scale),
+            "length": self.length * rng.uniform(*dr.length_scale),
+            "max_thrust": self.max_thrust * rng.uniform(*dr.max_thrust_scale),
+            "burn_rate": self.burn_rate * rng.uniform(*dr.burn_rate_scale),
+            "gimbal_rate": self.gimbal_rate_limit * rng.uniform(*dr.gimbal_rate_scale),
+            "gimbal_tau": 0.05 * rng.uniform(*dr.gimbal_tau_scale),
+            "gravity": 9.81 * rng.uniform(*dr.gravity_scale),
+            "air_density": 1.225 * rng.uniform(*dr.air_density_scale),
+            "wind": wind,
+            "gps_noise_std": rng.uniform(*dr.gps_noise_std),
+            "baro_noise_std": rng.uniform(*dr.baro_noise_std),
+            "velocity_noise_std": rng.uniform(*dr.velocity_noise_std),
+            "orientation_noise_std": rng.uniform(*dr.orientation_noise_std),
+            "gyro_noise_std": rng.uniform(*dr.gyro_noise_std),
+            "gyro_bias": rng.uniform(*dr.gyro_bias_range),
+        }
+
+    def _make_rocket(self, init_state: RocketState, fuel_fraction: float,
+                     ep: Optional[dict] = None) -> Rocket:
+        """Create rocket with fuel model, using episode parameters if provided."""
+        dry_mass = ep["dry_mass"] if ep else self.dry_mass
+        fuel_mass = ep["fuel_mass"] if ep else self.fuel_mass
+        length = ep["length"] if ep else self.length
+        burn_rate = ep["burn_rate"] if ep else self.burn_rate
+
         mass_model = MassModel(components=[
-            MassComponent("dry", self.dry_mass, RocketVec3(self.length / 2, 0, 0)),
+            MassComponent("dry", dry_mass, RocketVec3(length / 2, 0, 0)),
             FuelComponent(
                 "fuel",
-                mass=self.fuel_mass * fuel_fraction,
-                position=RocketVec3(self.length * 0.3, 0, 0),
-                full_mass=self.fuel_mass,
-                burn_rate=self.burn_rate,
+                mass=fuel_mass * fuel_fraction,
+                position=RocketVec3(length * 0.3, 0, 0),
+                full_mass=fuel_mass,
+                burn_rate=burn_rate,
             ),
         ])
 
         props = mass_model.to_rocket_props(
-            length=self.length,
+            length=length,
             thrust_application_offset=RocketVec3(0, 0, 0),
         )
 
         return Rocket(props=props, state=init_state, mass_model=mass_model)
 
-    def _make_environment(self) -> Environment:
-        """Create world environment."""
+    def _make_environment(self, ep: Optional[dict] = None) -> Environment:
+        """Create world environment, using episode parameters if provided."""
+        if ep:
+            return Environment(
+                gravity=WorldVec3(0.0, -ep["gravity"], 0.0),
+                wind=ep["wind"],
+                air_density=ep["air_density"],
+            )
         return Environment(
             gravity=WorldVec3(0.0, -9.81, 0.0),
             wind=WorldVec3(0.0, 0.0, 0.0),
             air_density=1.225,
         )
 
-    def _make_actuators(self, rocket: Rocket) -> Actuators:
-        """Create actuator bundle."""
+    def _make_actuators(self, rocket: Rocket, ep: Optional[dict] = None) -> Actuators:
+        """Create actuator bundle, using episode parameters if provided."""
+        gimbal_rate = ep["gimbal_rate"] if ep else self.gimbal_rate_limit
+        gimbal_tau = ep["gimbal_tau"] if ep else 0.05
+        max_thrust = ep["max_thrust"] if ep else self.max_thrust
+
         gimbal = GimbalActuator(
             rocket=rocket,
             max_outer_angle=self.max_gimbal_angle,
             max_inner_angle=self.max_gimbal_angle,
-            max_rate=self.gimbal_rate_limit,
-            tau=0.05,
+            max_rate=gimbal_rate,
+            tau=gimbal_tau,
         )
         throttle = ThrottleActuator(
             rocket=rocket,
-            max_thrust_rate=self.max_thrust * 2,
+            max_thrust_rate=max_thrust * 2,
             min_thrust=0.0,
         )
         return Actuators(gimbal=gimbal, throttle=throttle)
+
+    def _make_sensors(self, kernel: Kernel, ep: Optional[dict] = None) -> Sensors:
+        """
+        Create sensor bundle with per-episode noise levels.
+
+        When domain randomization is active, each episode gets different
+        sensor noise characteristics — simulating hardware variation.
+        """
+        if ep is None or self.domain_randomization is None:
+            return Sensors(kernel)
+
+        gps_errors = None
+        if ep["gps_noise_std"] > 0:
+            gps_errors = {
+                "x": GaussianNoise(std=ep["gps_noise_std"]),
+                "z": GaussianNoise(std=ep["gps_noise_std"]),
+            }
+
+        baro_errors = None
+        if ep["baro_noise_std"] > 0:
+            baro_errors = {"altitude": GaussianNoise(std=ep["baro_noise_std"])}
+
+        velocity_errors = None
+        if ep["velocity_noise_std"] > 0:
+            velocity_errors = {
+                "x": GaussianNoise(std=ep["velocity_noise_std"]),
+                "y": GaussianNoise(std=ep["velocity_noise_std"]),
+                "z": GaussianNoise(std=ep["velocity_noise_std"]),
+            }
+
+        orientation_errors = None
+        if ep["orientation_noise_std"] > 0:
+            orientation_errors = {
+                "roll": GaussianNoise(std=ep["orientation_noise_std"]),
+                "pitch": GaussianNoise(std=ep["orientation_noise_std"]),
+                "yaw": GaussianNoise(std=ep["orientation_noise_std"]),
+            }
+
+        gyro_errors = None
+        if ep["gyro_noise_std"] > 0 or ep["gyro_bias"] != 0:
+            gyro_errors = {}
+            for ch in ("x", "y", "z"):
+                errors = []
+                if ep["gyro_bias"] != 0:
+                    # Per-axis bias: constant for the episode, sampled in [-bias, +bias]
+                    errors.append(Bias(offset=self.np_random.uniform(
+                        -abs(ep["gyro_bias"]), abs(ep["gyro_bias"])
+                    )))
+                if ep["gyro_noise_std"] > 0:
+                    errors.append(GaussianNoise(std=ep["gyro_noise_std"]))
+                if len(errors) == 1:
+                    gyro_errors[ch] = errors[0]
+                elif len(errors) > 1:
+                    gyro_errors[ch] = CompositeError(errors=errors)
+
+        return Sensors(
+            kernel,
+            gps_errors=gps_errors,
+            velocity_errors=velocity_errors,
+            orientation_errors=orientation_errors,
+            gyro_errors=gyro_errors,
+            baro_errors=baro_errors,
+        )
 
     def _get_obs(self) -> np.ndarray:
         """
@@ -943,7 +1152,7 @@ class RocketLandingEnvV2(gym.Env):
         gps = self._sensors.GPS.read()  # Horizontal position (x, z)
         alt = self._sensors.Barometer.read()  # Altitude (y)
         vel = self._sensors.VelocitySensor.read()
-        orient = self._sensors.AttitudeEstimator.read()  # Fused orientation estimate
+        orient = self._sensors.OrientationSensor.read()  # Ground truth + noise
         omega = self._sensors.GyroSensor.read()
 
         qw, qx, qy, qz = orient.as_array()
@@ -1115,12 +1324,16 @@ class RocketLandingEnvV2(gym.Env):
             thrust_body=RocketVec3(0.0, 0.0, 0.0),
         )
 
-        rocket = self._make_rocket(init_state, init_fuel)
-        environment = self._make_environment()
+        # Sample episode parameters (domain randomization)
+        ep = self._sample_episode_params()
+        self._ep_params = ep
+
+        rocket = self._make_rocket(init_state, init_fuel, ep)
+        environment = self._make_environment(ep)
 
         self._kernel = Kernel(rocket, environment)
-        self._sensors = Sensors(self._kernel)
-        self._actuators = self._make_actuators(rocket)
+        self._sensors = self._make_sensors(self._kernel, ep)
+        self._actuators = self._make_actuators(rocket, ep)
 
         self._step_count = 0
         self._time = 0.0
@@ -1131,13 +1344,20 @@ class RocketLandingEnvV2(gym.Env):
             "init_altitude": init_alt,
             "init_fuel": init_fuel,
         }
+        # Log DR params for analysis (only when DR is active)
+        if self.domain_randomization is not None:
+            info["dr_params"] = {
+                k: (v if not isinstance(v, WorldVec3) else [v.x, v.y, v.z])
+                for k, v in ep.items()
+            }
 
         return obs, info
 
     def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, dict]:
         """Execute one step in the environment."""
-        # Scale action
-        throttle = float(action[0]) * self.max_thrust
+        # Scale action — use episode max_thrust if DR is active
+        ep_thrust = self._ep_params["max_thrust"] if self._ep_params else self.max_thrust
+        throttle = float(action[0]) * ep_thrust
         gimbal_outer = float(action[1]) * self.max_gimbal_angle
         gimbal_inner = float(action[2]) * self.max_gimbal_angle
 
