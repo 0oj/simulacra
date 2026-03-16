@@ -12,7 +12,7 @@ dependencies = [
     "pydantic>=2.12.3",
     "rich>=14.3.3",
     "scipy>=1.16.3",
-    "setuptools>=82.0.0",
+    "setuptools>=70.0,<81",
     "stable-baselines3>=2.7.1",
     "tensorboard>=2.20.0",
     "tqdm>=4.67.3",
@@ -25,6 +25,9 @@ packages = ["src/simulacra"]
 [project.optional-dependencies]
 rl = [
     "gymnasium>=1.0.0",
+]
+jax = [
+    "jax[cpu]>=0.6.0",
 ]
 
 [dependency-groups]
