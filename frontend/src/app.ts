@@ -2,8 +2,19 @@ import type { Scenario } from './types'
 import { SCENARIO_COLORS } from './types'
 import { parseNDJSON, frameIndexAt } from './parser'
 import { SceneManager } from './scene'
+import type { WaypointData } from './scene'
 import { ChartManager } from './charts'
 import { saveFile, getFile, listRecent, deleteFile } from './store'
+import { computeFlightScore, formatScore } from './score'
+
+interface WaypointInput {
+  x: number
+  y: number
+  z: number
+  hold: number
+  speed: number
+  radius: number
+}
 
 export class App {
   private sceneManager: SceneManager
@@ -27,6 +38,16 @@ export class App {
   private eventMarkersEl: HTMLElement
   private hudEl: HTMLElement
 
+  // Simulation panel
+  private simPanel: HTMLElement
+  private simWaypointList: HTMLElement
+  private simRunBtn: HTMLElement
+  private simStatus: HTMLElement
+  private simControllerSelect: HTMLSelectElement
+  private simModelSelect: HTMLSelectElement
+  private simWaypoints: WaypointInput[] = []
+  private availableModels: { name: string; path: string; type: string }[] = []
+
   constructor() {
     document.body.innerHTML = ''
     const root = document.createElement('div')
@@ -36,6 +57,7 @@ export class App {
         <div id="brand">SIMULACRA</div>
         <div id="scenario-list"></div>
         <div id="header-actions">
+          <button id="sim-btn">SIM</button>
           <div id="browse-wrapper">
             <button id="browse-btn">BROWSE</button>
             <div id="browse-dropdown" class="dropdown hidden"></div>
@@ -53,12 +75,41 @@ export class App {
           <div id="empty-state">DROP NDJSON FILES</div>
           <div id="hud"></div>
         </div>
-        <div id="charts-container"></div>
+        <div id="charts-container">
+          <div id="sim-panel" class="hidden">
+            <div class="sim-header">
+              <span class="sim-title">SIMULATE</span>
+              <button id="sim-close" class="sim-close">\u00d7</button>
+            </div>
+            <div class="sim-section">
+              <label class="sim-label">CONTROLLER</label>
+              <select id="sim-controller" class="sim-select">
+                <option value="pid">PID</option>
+                <option value="rl" selected>RL</option>
+              </select>
+            </div>
+            <div class="sim-section" id="sim-model-section">
+              <label class="sim-label">MODEL</label>
+              <select id="sim-model" class="sim-select">
+                <option value="">Loading...</option>
+              </select>
+            </div>
+            <div class="sim-section">
+              <label class="sim-label">WAYPOINTS</label>
+              <div id="sim-waypoint-list"></div>
+              <button id="sim-add-wp" class="sim-add-btn">+ ADD WAYPOINT</button>
+            </div>
+            <div class="sim-actions">
+              <button id="sim-run" class="sim-run-btn">RUN</button>
+              <span id="sim-status" class="sim-status"></span>
+            </div>
+          </div>
+        </div>
       </div>
       <div id="playback-bar">
         <div id="playback-controls">
-          <button id="rewind-btn" class="pb-btn" title="Rewind">⏮</button>
-          <button id="play-btn" class="pb-btn" title="Play/Pause">▶</button>
+          <button id="rewind-btn" class="pb-btn" title="Rewind">\u23ee</button>
+          <button id="play-btn" class="pb-btn" title="Play/Pause">\u25b6</button>
         </div>
         <div id="timeline-wrapper">
           <div id="event-markers"></div>
@@ -68,8 +119,8 @@ export class App {
           <span id="time-display">T+ 000.00 / 000.00</span>
         </div>
         <div id="speed-controls">
-          <button id="speed-down" class="pb-btn" title="Slower">−</button>
-          <span id="speed-display">1.0×</span>
+          <button id="speed-down" class="pb-btn" title="Slower">\u2212</button>
+          <span id="speed-display">1.0\u00d7</span>
           <button id="speed-up" class="pb-btn" title="Faster">+</button>
         </div>
         <div id="camera-controls">
@@ -93,6 +144,14 @@ export class App {
     this.eventMarkersEl = document.getElementById('event-markers')!
     this.hudEl = document.getElementById('hud')!
 
+    // Sim panel references
+    this.simPanel = document.getElementById('sim-panel')!
+    this.simWaypointList = document.getElementById('sim-waypoint-list')!
+    this.simRunBtn = document.getElementById('sim-run')!
+    this.simStatus = document.getElementById('sim-status')!
+    this.simControllerSelect = document.getElementById('sim-controller')! as HTMLSelectElement
+    this.simModelSelect = document.getElementById('sim-model')! as HTMLSelectElement
+
     // Scene and Charts
     this.sceneManager = new SceneManager(sceneContainer)
     this.chartManager = new ChartManager(chartsContainer)
@@ -101,6 +160,7 @@ export class App {
     this.setupDragDrop(root)
     this.setupControls()
     this.setupKeyboard()
+    this.setupSimPanel()
 
     // Hidden file input
     const fileInput = document.createElement('input')
@@ -189,7 +249,11 @@ export class App {
   // ===========================================================================
 
   private setupDragDrop(root: HTMLElement): void {
+    const hasFiles = (e: DragEvent) =>
+      e.dataTransfer?.types?.includes('Files') ?? false
+
     root.addEventListener('dragover', (e) => {
+      if (!hasFiles(e)) return
       e.preventDefault()
       root.classList.add('drag-over')
     })
@@ -197,9 +261,10 @@ export class App {
       root.classList.remove('drag-over')
     })
     root.addEventListener('drop', (e) => {
+      if (!hasFiles(e)) return
       e.preventDefault()
       root.classList.remove('drag-over')
-      if (e.dataTransfer?.files) {
+      if (e.dataTransfer?.files?.length) {
         this.loadFiles(e.dataTransfer.files)
       }
     })
@@ -478,6 +543,342 @@ export class App {
       dropdown.classList.add('hidden')
     })
     dropdown.addEventListener('click', (e) => e.stopPropagation())
+  }
+
+  // ===========================================================================
+  // Simulation panel
+  // ===========================================================================
+
+  private setupSimPanel(): void {
+    // Default waypoints: simple vertical hop
+    this.simWaypoints = [
+      { x: 0, y: 15, z: 0, hold: 3, speed: 3, radius: 1 },
+      { x: 0, y: 0, z: 0, hold: 60, speed: 1, radius: 0.5 },
+    ]
+
+    // SIM button toggles panel
+    document.getElementById('sim-btn')!.addEventListener('click', () => {
+      this.toggleSimPanel()
+    })
+
+    // Close button
+    document.getElementById('sim-close')!.addEventListener('click', () => {
+      this.closeSimPanel()
+    })
+
+    // Add waypoint button
+    document.getElementById('sim-add-wp')!.addEventListener('click', () => {
+      const last = this.simWaypoints[this.simWaypoints.length - 1]
+      this.simWaypoints.splice(this.simWaypoints.length - 1, 0, {
+        x: 0, y: last ? last.y + 5 : 10, z: 0,
+        hold: 2, speed: 3, radius: 1,
+      })
+      this.renderWaypoints()
+      this.syncWaypointsToScene()
+    })
+
+    // Controller type change
+    this.simControllerSelect.addEventListener('change', () => {
+      const modelSection = document.getElementById('sim-model-section')!
+      modelSection.style.display = this.simControllerSelect.value === 'rl' ? '' : 'none'
+    })
+
+    // Run button
+    this.simRunBtn.addEventListener('click', () => this.runSimulation())
+
+    // Load available models
+    this.loadModels()
+    this.renderWaypoints()
+  }
+
+  private toggleSimPanel(): void {
+    const hidden = this.simPanel.classList.contains('hidden')
+    if (hidden) {
+      this.simPanel.classList.remove('hidden')
+      this.emptyState.style.display = 'none'
+      // Enable 3D waypoint editing
+      this.sceneManager.enableWaypointMode(true, (wps) => {
+        this.onWaypointsChangedFrom3D(wps)
+      })
+      this.syncWaypointsToScene()
+      // Keep rendering scene even without scenarios
+      if (this.scenarios.length === 0) {
+        this.startWaypointRenderLoop()
+      }
+    } else {
+      this.closeSimPanel()
+    }
+  }
+
+  private closeSimPanel(): void {
+    this.simPanel.classList.add('hidden')
+    this.sceneManager.enableWaypointMode(false)
+    if (this.scenarios.length === 0) {
+      this.emptyState.style.display = ''
+    }
+  }
+
+  /** Sync sim panel waypoints → 3D scene markers. */
+  private syncWaypointsToScene(): void {
+    this.sceneManager.setWaypoints(
+      this.simWaypoints.map(wp => ({ x: wp.x, y: wp.y, z: wp.z })),
+    )
+  }
+
+  /** Called when user drags waypoints in 3D scene. */
+  private onWaypointsChangedFrom3D(wps: WaypointData[]): void {
+    // Update sim panel data from 3D positions
+    for (let i = 0; i < wps.length && i < this.simWaypoints.length; i++) {
+      this.simWaypoints[i].x = Math.round(wps[i].x * 10) / 10
+      this.simWaypoints[i].y = Math.round(wps[i].y * 10) / 10
+      this.simWaypoints[i].z = Math.round(wps[i].z * 10) / 10
+    }
+    // Handle added waypoints (from alt-click on ground)
+    while (wps.length > this.simWaypoints.length) {
+      const wp = wps[this.simWaypoints.length]
+      this.simWaypoints.splice(this.simWaypoints.length - 1, 0, {
+        x: Math.round(wp.x * 10) / 10,
+        y: Math.round(wp.y * 10) / 10,
+        z: Math.round(wp.z * 10) / 10,
+        hold: 2, speed: 3, radius: 1,
+      })
+    }
+    this.renderWaypoints()
+  }
+
+  private waypointRenderLoopId: number | null = null
+
+  private startWaypointRenderLoop(): void {
+    if (this.waypointRenderLoopId) return
+    const loop = () => {
+      if (!this.waypointModeActive()) {
+        this.waypointRenderLoopId = null
+        return
+      }
+      this.sceneManager.renderOnce()
+      this.waypointRenderLoopId = requestAnimationFrame(loop)
+    }
+    this.waypointRenderLoopId = requestAnimationFrame(loop)
+  }
+
+  private waypointModeActive(): boolean {
+    return !this.simPanel.classList.contains('hidden') && this.scenarios.length === 0
+  }
+
+  private async loadModels(): Promise<void> {
+    try {
+      const res = await fetch('/api/models')
+      const data = await res.json()
+      this.availableModels = data.models || []
+    } catch {
+      // Server not running — show placeholder
+      this.availableModels = []
+    }
+
+    this.simModelSelect.innerHTML = ''
+    if (this.availableModels.length === 0) {
+      const opt = document.createElement('option')
+      opt.value = ''
+      opt.textContent = 'No models found'
+      this.simModelSelect.appendChild(opt)
+    } else {
+      for (const m of this.availableModels) {
+        const opt = document.createElement('option')
+        opt.value = m.path
+        opt.textContent = `${m.name} (${m.type})`
+        this.simModelSelect.appendChild(opt)
+      }
+    }
+  }
+
+  private renderWaypoints(): void {
+    this.simWaypointList.innerHTML = ''
+    const n = this.simWaypoints.length
+
+    // Column header
+    const header = document.createElement('div')
+    header.className = 'sim-wp-header'
+    header.innerHTML = '<span></span><span>X</span><span>Y</span><span>Z</span><span></span>'
+    this.simWaypointList.appendChild(header)
+
+    for (let i = 0; i < n; i++) {
+      const wp = this.simWaypoints[i]
+
+      const row = document.createElement('div')
+      row.className = 'sim-wp-row'
+      row.draggable = true
+      row.dataset.i = String(i)
+
+      row.innerHTML = `
+        <span class="sim-wp-grip" title="Drag to reorder">\u2847</span>
+        <input type="number" class="sim-wp-input" value="${wp.x}" data-i="${i}" data-f="x" step="1" title="X">
+        <input type="number" class="sim-wp-input" value="${wp.y}" data-i="${i}" data-f="y" step="1" title="Y (altitude)">
+        <input type="number" class="sim-wp-input" value="${wp.z}" data-i="${i}" data-f="z" step="1" title="Z">
+        <button class="sim-wp-del" data-i="${i}" title="Remove"${n <= 2 ? ' disabled' : ''}>\u00d7</button>
+      `
+      this.simWaypointList.appendChild(row)
+    }
+
+    // Drag-to-reorder
+    let dragFrom = -1
+    this.simWaypointList.querySelectorAll<HTMLElement>('.sim-wp-row').forEach((row) => {
+      row.addEventListener('dragstart', (e) => {
+        dragFrom = parseInt(row.dataset.i!)
+        row.classList.add('sim-wp-dragging')
+        e.dataTransfer!.effectAllowed = 'move'
+      })
+      row.addEventListener('dragend', () => {
+        row.classList.remove('sim-wp-dragging')
+        dragFrom = -1
+        // Clear all drop indicators
+        this.simWaypointList.querySelectorAll('.sim-wp-drop-above, .sim-wp-drop-below').forEach(
+          el => el.classList.remove('sim-wp-drop-above', 'sim-wp-drop-below'),
+        )
+      })
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault()
+        e.dataTransfer!.dropEffect = 'move'
+        const targetIdx = parseInt(row.dataset.i!)
+        if (targetIdx === dragFrom) return
+        // Show drop indicator
+        this.simWaypointList.querySelectorAll('.sim-wp-drop-above, .sim-wp-drop-below').forEach(
+          el => el.classList.remove('sim-wp-drop-above', 'sim-wp-drop-below'),
+        )
+        row.classList.add(targetIdx < dragFrom ? 'sim-wp-drop-above' : 'sim-wp-drop-below')
+      })
+      row.addEventListener('dragleave', () => {
+        row.classList.remove('sim-wp-drop-above', 'sim-wp-drop-below')
+      })
+      row.addEventListener('drop', (e) => {
+        e.preventDefault()
+        const targetIdx = parseInt(row.dataset.i!)
+        if (dragFrom < 0 || dragFrom === targetIdx) return
+        const [moved] = this.simWaypoints.splice(dragFrom, 1)
+        this.simWaypoints.splice(targetIdx, 0, moved)
+        this.renderWaypoints()
+        this.syncWaypointsToScene()
+      })
+    })
+
+    // Bind input changes
+    this.simWaypointList.querySelectorAll('.sim-wp-input').forEach((el) => {
+      el.addEventListener('change', (e) => {
+        const input = e.target as HTMLInputElement
+        const idx = parseInt(input.dataset.i!)
+        const field = input.dataset.f as keyof WaypointInput
+        this.simWaypoints[idx][field] = parseFloat(input.value) || 0
+        this.syncWaypointsToScene()
+      })
+    })
+
+    // Bind delete buttons
+    this.simWaypointList.querySelectorAll('.sim-wp-del').forEach((el) => {
+      el.addEventListener('click', (e) => {
+        const btn = e.target as HTMLElement
+        const idx = parseInt(btn.dataset.i!)
+        if (this.simWaypoints.length > 2) {
+          this.simWaypoints.splice(idx, 1)
+          this.renderWaypoints()
+          this.syncWaypointsToScene()
+        }
+      })
+    })
+  }
+
+  private async runSimulation(): Promise<void> {
+    this.simRunBtn.setAttribute('disabled', '')
+    this.simStatus.textContent = 'Running...'
+    this.simStatus.className = 'sim-status'
+
+    const controller = this.simControllerSelect.value
+    const modelPath = controller === 'rl' ? this.simModelSelect.value : undefined
+
+    const waypoints = this.simWaypoints.map((wp) => ({
+      pos: [wp.x, wp.y, wp.z],
+      hold_time: wp.hold,
+      max_speed: wp.speed,
+      acceptance_radius: wp.radius,
+    }))
+
+    try {
+      const res = await fetch('/api/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          waypoints,
+          controller,
+          model_path: modelPath,
+          max_tilt: 0.15,
+          max_duration: 120,
+        }),
+      })
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        throw new Error(err.error || `HTTP ${res.status}`)
+      }
+
+      const ndjsonText = await res.text()
+      const label = `sim_${controller}_${Date.now()}`
+
+      // Clear previous sim results
+      this.clearAll()
+
+      // Load the result
+      this.loadText(label + '.ndjson', ndjsonText)
+      this.afterLoad()
+
+      // Compute and display flight score
+      const scenario = this.scenarios[0]
+      if (scenario) {
+        const score = computeFlightScore(scenario.data.frames, scenario.data.dt)
+        this.showScoreCard(score)
+      }
+
+      this.simStatus.textContent = 'Done'
+      this.simStatus.className = 'sim-status sim-status-ok'
+      this.closeSimPanel()
+    } catch (err) {
+      this.simStatus.textContent = String(err instanceof Error ? err.message : err)
+      this.simStatus.className = 'sim-status sim-status-err'
+    } finally {
+      this.simRunBtn.removeAttribute('disabled')
+    }
+  }
+
+  private showScoreCard(score: ReturnType<typeof computeFlightScore>): void {
+    // Remove existing score card
+    document.getElementById('score-card')?.remove()
+
+    const metrics = formatScore(score)
+    const card = document.createElement('div')
+    card.id = 'score-card'
+
+    let html = `
+      <div class="score-header">
+        <span class="score-title">FLIGHT SCORE</span>
+        <span class="score-overall">${Math.round(score.overall)}</span>
+        <button class="score-close" id="score-close">\u00d7</button>
+      </div>
+      <div class="score-grid">
+    `
+    for (const m of metrics) {
+      html += `
+        <div class="score-row">
+          <span class="score-label">${m.label}</span>
+          <span class="score-value score-${m.grade}">${m.value}</span>
+        </div>
+      `
+    }
+    html += '</div>'
+    card.innerHTML = html
+
+    const sceneContainer = document.getElementById('scene-container')!
+    sceneContainer.appendChild(card)
+
+    document.getElementById('score-close')!.addEventListener('click', () => {
+      card.remove()
+    })
   }
 
   // ===========================================================================

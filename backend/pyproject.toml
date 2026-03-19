@@ -28,6 +28,8 @@ rl = [
 ]
 jax = [
     "jax[cpu]>=0.6.0",
+    "flax>=0.10.0",
+    "optax>=0.2.0",
 ]
 
 [dependency-groups]

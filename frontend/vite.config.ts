@@ -72,5 +72,10 @@ export default defineConfig({
       // Allow serving files from outside the project root
       allow: ['.', outputDir],
     },
+    proxy: {
+      // Forward simulation API calls to the Python sim server
+      '/api/simulate': 'http://localhost:8767',
+      '/api/models': 'http://localhost:8767',
+    },
   },
 })

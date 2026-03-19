@@ -576,6 +576,344 @@ body {
 }
 
 /* ============================================================================
+   Simulation panel
+   ============================================================================ */
+
+#sim-panel {
+  font-family: var(--font);
+}
+
+#sim-panel.hidden {
+  display: none;
+}
+
+.sim-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sim-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--text);
+}
+
+.sim-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.sim-close:hover {
+  color: var(--text);
+}
+
+.sim-section {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sim-label {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.sim-select {
+  width: 100%;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 4px 6px;
+  outline: none;
+}
+
+.sim-select:focus {
+  border-color: var(--accent);
+}
+
+.sim-wp-header {
+  display: grid;
+  grid-template-columns: 16px 1fr 1fr 1fr 18px;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+
+.sim-wp-header span {
+  font-size: 8px;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.sim-wp-row {
+  display: grid;
+  grid-template-columns: 16px 1fr 1fr 1fr 18px;
+  gap: 4px;
+  margin-bottom: 3px;
+  align-items: center;
+  transition: opacity 0.1s;
+}
+
+.sim-wp-row.sim-wp-dragging {
+  opacity: 0.3;
+}
+
+.sim-wp-row.sim-wp-drop-above {
+  border-top: 1px solid var(--accent);
+}
+
+.sim-wp-row.sim-wp-drop-below {
+  border-bottom: 1px solid var(--accent);
+}
+
+.sim-wp-grip {
+  color: var(--text-muted);
+  cursor: grab;
+  font-size: 10px;
+  text-align: center;
+  user-select: none;
+  line-height: 1;
+}
+
+.sim-wp-grip:active {
+  cursor: grabbing;
+}
+
+.sim-wp-idx {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.sim-wp-input {
+  width: 100%;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 3px 4px;
+  text-align: right;
+  outline: none;
+  -moz-appearance: textfield;
+}
+
+.sim-wp-input::-webkit-inner-spin-button,
+.sim-wp-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.sim-wp-input:focus {
+  border-color: var(--accent);
+}
+
+.sim-wp-del {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.sim-wp-del:hover:not(:disabled) {
+  color: #ef4444;
+}
+
+.sim-wp-del:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.sim-add-btn {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 4px 0;
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 9px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.sim-add-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.sim-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.sim-run-btn {
+  background: var(--accent);
+  border: none;
+  color: white;
+  font-family: var(--font);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  padding: 6px 20px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.sim-run-btn:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.sim-run-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sim-status {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.sim-status-ok {
+  color: #22c55e;
+}
+
+.sim-status-err {
+  color: #ef4444;
+}
+
+#sim-btn {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: 1px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+#sim-btn:hover {
+  background: var(--accent);
+  color: white;
+}
+
+/* ============================================================================
+   Flight score card
+   ============================================================================ */
+
+#score-card {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 15;
+  width: 200px;
+  background: rgba(15, 22, 41, 0.92);
+  border: 1px solid var(--border);
+  font-family: var(--font);
+}
+
+.score-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.score-title {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.score-overall {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.score-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.score-close:hover {
+  color: var(--text);
+}
+
+.score-grid {
+  padding: 6px 10px;
+}
+
+.score-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 0;
+  font-size: 10px;
+}
+
+.score-label {
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.score-value {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.score-good { color: #22c55e; }
+.score-ok { color: #f59e0b; }
+.score-bad { color: #ef4444; }
+
+/* ============================================================================
+   Waypoint labels (CSS2DRenderer)
+   ============================================================================ */
+
+.wp-label {
+  font-family: var(--font);
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: #f59e0b;
+  background: rgba(10, 14, 26, 0.7);
+  padding: 1px 4px;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* ============================================================================
    3D annotation labels (CSS2DRenderer)
    ============================================================================ */
 

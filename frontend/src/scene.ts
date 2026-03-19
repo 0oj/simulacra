@@ -55,6 +55,23 @@ interface RocketObject {
   wind: WindState | null
 }
 
+export interface WaypointData {
+  x: number; y: number; z: number
+}
+
+interface DragState {
+  markerIndex: number
+  plane: THREE.Plane
+  offset: THREE.Vector3
+  vertical: boolean  // shift-drag = vertical only
+}
+
+const WP_COLOR = 0xf59e0b       // amber
+const WP_COLOR_HOVER = 0xfbbf24  // lighter amber
+const WP_PATH_COLOR = 0xf59e0b
+const WP_RING_RADIUS = 0.6
+const WP_SPHERE_RADIUS = 0.3
+
 export class SceneManager {
   private renderer: THREE.WebGLRenderer
   private labelRenderer: CSS2DRenderer
@@ -66,6 +83,20 @@ export class SceneManager {
   private container: HTMLElement
   private grid: THREE.GridHelper
   private ground: THREE.Mesh
+
+  // Waypoint interaction
+  private waypointGroup = new THREE.Group()
+  private waypointMarkers: THREE.Mesh[] = []
+  private waypointLabels: CSS2DObject[] = []
+  private waypointPath: THREE.Line | null = null
+  private waypointVerticals: THREE.Line[] = []
+  private waypointModeEnabled = false
+  private waypointData: WaypointData[] = []
+  private waypointChangeCallback: ((waypoints: WaypointData[]) => void) | null = null
+  private dragState: DragState | null = null
+  private hoveredMarker: number = -1
+  private raycaster = new THREE.Raycaster()
+  private mouse = new THREE.Vector2()
 
   constructor(container: HTMLElement) {
     this.container = container
@@ -144,6 +175,15 @@ export class SceneManager {
     // Lock Y-up: prevent camera from flipping past the poles
     this.controls.maxPolarAngle = Math.PI * 0.95
     this.controls.minPolarAngle = Math.PI * 0.05
+
+    // Waypoint group (always in scene, populated when mode is active)
+    this.scene.add(this.waypointGroup)
+
+    // Waypoint interaction events
+    const el = this.labelRenderer.domElement
+    el.addEventListener('pointerdown', (e) => this.onPointerDown(e))
+    el.addEventListener('pointermove', (e) => this.onPointerMove(e))
+    el.addEventListener('pointerup', (e) => this.onPointerUp(e))
 
     this.handleResize()
     window.addEventListener('resize', () => this.handleResize())
@@ -824,6 +864,325 @@ export class SceneManager {
     }
 
     // Render
+    this.renderer.render(this.scene, this.camera)
+    this.labelRenderer.render(this.scene, this.camera)
+  }
+
+  // ===========================================================================
+  // Interactive waypoint placement
+  // ===========================================================================
+
+  /** Enable/disable waypoint editing mode. */
+  enableWaypointMode(
+    enabled: boolean,
+    onChange?: (waypoints: WaypointData[]) => void,
+  ): void {
+    this.waypointModeEnabled = enabled
+    this.waypointChangeCallback = onChange ?? null
+    this.waypointGroup.visible = enabled
+    if (!enabled) {
+      this.dragState = null
+      this.hoveredMarker = -1
+      this.container.style.cursor = ''
+    }
+  }
+
+  /** Set waypoints from external data (e.g., the sim panel). */
+  setWaypoints(waypoints: WaypointData[]): void {
+    this.waypointData = waypoints.map(w => ({ ...w }))
+    this.rebuildWaypointVisuals()
+  }
+
+  /** Get current waypoint positions. */
+  getWaypoints(): WaypointData[] {
+    return this.waypointData.map(w => ({ ...w }))
+  }
+
+  private rebuildWaypointVisuals(): void {
+    // Clear existing
+    for (const m of this.waypointMarkers) {
+      this.waypointGroup.remove(m)
+      m.geometry.dispose()
+      ;(m.material as THREE.Material).dispose()
+    }
+    for (const l of this.waypointLabels) {
+      this.waypointGroup.remove(l)
+    }
+    for (const v of this.waypointVerticals) {
+      this.waypointGroup.remove(v)
+      v.geometry.dispose()
+    }
+    if (this.waypointPath) {
+      this.waypointGroup.remove(this.waypointPath)
+      this.waypointPath.geometry.dispose()
+    }
+    this.waypointMarkers = []
+    this.waypointLabels = []
+    this.waypointVerticals = []
+    this.waypointPath = null
+
+    const wps = this.waypointData
+    if (wps.length === 0) return
+
+    // Create markers + labels + vertical lines
+    for (let i = 0; i < wps.length; i++) {
+      const wp = wps[i]
+
+      // Sphere marker (draggable)
+      const geo = new THREE.SphereGeometry(WP_SPHERE_RADIUS, 16, 12)
+      const mat = new THREE.MeshBasicMaterial({
+        color: WP_COLOR,
+        transparent: true,
+        opacity: 0.9,
+      })
+      const marker = new THREE.Mesh(geo, mat)
+      marker.position.set(wp.x, wp.y, wp.z)
+      marker.userData.waypointIndex = i
+      this.waypointGroup.add(marker)
+      this.waypointMarkers.push(marker)
+
+      // Ring on the ground showing XZ position
+      const ringGeo = new THREE.RingGeometry(
+        WP_RING_RADIUS * 0.7, WP_RING_RADIUS, 32,
+      )
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: WP_COLOR,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.3,
+      })
+      const ring = new THREE.Mesh(ringGeo, ringMat)
+      ring.rotation.x = -Math.PI / 2
+      ring.position.set(wp.x, 0.02, wp.z)
+      this.waypointGroup.add(ring)
+      // Store in verticals array for cleanup (reuse)
+      this.waypointVerticals.push(ring as unknown as THREE.Line)
+
+      // Vertical dashed line from ground to waypoint
+      const vGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(wp.x, 0, wp.z),
+        new THREE.Vector3(wp.x, wp.y, wp.z),
+      ])
+      const vMat = new THREE.LineDashedMaterial({
+        color: WP_COLOR,
+        transparent: true,
+        opacity: 0.25,
+        dashSize: 0.5,
+        gapSize: 0.3,
+      })
+      const vLine = new THREE.Line(vGeo, vMat)
+      vLine.computeLineDistances()
+      this.waypointGroup.add(vLine)
+      this.waypointVerticals.push(vLine)
+
+      // Label
+      const el = document.createElement('div')
+      el.className = 'wp-label'
+      el.textContent = `WP${i}`
+      const label = new CSS2DObject(el)
+      label.position.set(wp.x, wp.y + 1.2, wp.z)
+      this.waypointGroup.add(label)
+      this.waypointLabels.push(label)
+    }
+
+    // Path line connecting waypoints
+    const pathPoints = wps.map(wp => new THREE.Vector3(wp.x, wp.y, wp.z))
+    const pathGeo = new THREE.BufferGeometry().setFromPoints(pathPoints)
+    const pathMat = new THREE.LineDashedMaterial({
+      color: WP_PATH_COLOR,
+      transparent: true,
+      opacity: 0.5,
+      dashSize: 1.0,
+      gapSize: 0.5,
+    })
+    this.waypointPath = new THREE.Line(pathGeo, pathMat)
+    this.waypointPath.computeLineDistances()
+    this.waypointGroup.add(this.waypointPath)
+  }
+
+  private updateMouseCoords(e: PointerEvent): void {
+    const rect = this.renderer.domElement.getBoundingClientRect()
+    this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+    this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+  }
+
+  private hitTestWaypoints(e: PointerEvent): number {
+    this.updateMouseCoords(e)
+    this.raycaster.setFromCamera(this.mouse, this.camera)
+
+    // Use a larger threshold for easier picking
+    const oldThreshold = this.raycaster.params.Points?.threshold
+    if (this.raycaster.params.Points) {
+      this.raycaster.params.Points.threshold = 1.0
+    }
+
+    const intersects = this.raycaster.intersectObjects(this.waypointMarkers)
+
+    if (this.raycaster.params.Points && oldThreshold !== undefined) {
+      this.raycaster.params.Points.threshold = oldThreshold
+    }
+
+    if (intersects.length > 0) {
+      return intersects[0].object.userData.waypointIndex as number
+    }
+    return -1
+  }
+
+  private hitTestGround(e: PointerEvent): THREE.Vector3 | null {
+    this.updateMouseCoords(e)
+    this.raycaster.setFromCamera(this.mouse, this.camera)
+    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+    const point = new THREE.Vector3()
+    const hit = this.raycaster.ray.intersectPlane(groundPlane, point)
+    return hit ? point : null
+  }
+
+  private onPointerDown(e: PointerEvent): void {
+    if (!this.waypointModeEnabled) return
+
+    const markerIdx = this.hitTestWaypoints(e)
+    if (markerIdx >= 0) {
+      // Start dragging this waypoint
+      e.stopPropagation()
+      e.preventDefault()
+      this.controls.enabled = false
+
+      const wp = this.waypointData[markerIdx]
+      const wpPos = new THREE.Vector3(wp.x, wp.y, wp.z)
+
+      if (e.shiftKey) {
+        // Vertical drag: plane perpendicular to camera's right vector
+        const camDir = new THREE.Vector3()
+        this.camera.getWorldDirection(camDir)
+        // Use camera right vector as plane normal for vertical dragging
+        const right = new THREE.Vector3()
+        right.crossVectors(camDir, new THREE.Vector3(0, 1, 0)).normalize()
+        const plane = new THREE.Plane()
+        plane.setFromNormalAndCoplanarPoint(right, wpPos)
+        this.dragState = {
+          markerIndex: markerIdx,
+          plane,
+          offset: new THREE.Vector3(),
+          vertical: true,
+        }
+      } else {
+        // Horizontal drag: XZ plane at waypoint's Y height
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -wp.y)
+        const intersection = new THREE.Vector3()
+        this.raycaster.ray.intersectPlane(plane, intersection)
+        const offset = wpPos.clone().sub(intersection)
+        this.dragState = {
+          markerIndex: markerIdx,
+          plane,
+          offset,
+          vertical: false,
+        }
+      }
+      return
+    }
+
+    // Click on ground → add new waypoint (only on double-click or alt-click)
+    if (e.altKey || e.detail === 2) {
+      const groundPoint = this.hitTestGround(e)
+      if (groundPoint) {
+        e.stopPropagation()
+        e.preventDefault()
+        // Insert before the last waypoint (landing)
+        const insertIdx = Math.max(0, this.waypointData.length - 1)
+        this.waypointData.splice(insertIdx, 0, {
+          x: Math.round(groundPoint.x * 2) / 2,
+          y: 10,  // default altitude
+          z: Math.round(groundPoint.z * 2) / 2,
+        })
+        this.rebuildWaypointVisuals()
+        this.fireWaypointChange()
+      }
+    }
+  }
+
+  private onPointerMove(e: PointerEvent): void {
+    if (!this.waypointModeEnabled) return
+
+    if (this.dragState) {
+      // Active drag
+      this.updateMouseCoords(e)
+      this.raycaster.setFromCamera(this.mouse, this.camera)
+
+      const intersection = new THREE.Vector3()
+      const hit = this.raycaster.ray.intersectPlane(
+        this.dragState.plane, intersection,
+      )
+      if (!hit) return
+
+      const idx = this.dragState.markerIndex
+      if (this.dragState.vertical) {
+        // Only move Y
+        this.waypointData[idx].y = Math.max(0, intersection.y)
+      } else {
+        // Move XZ, keep Y
+        const newPos = intersection.add(this.dragState.offset)
+        this.waypointData[idx].x = newPos.x
+        this.waypointData[idx].z = newPos.z
+      }
+
+      // Update marker position
+      const wp = this.waypointData[idx]
+      this.waypointMarkers[idx].position.set(wp.x, wp.y, wp.z)
+      this.waypointLabels[idx].position.set(wp.x, wp.y + 1.2, wp.z)
+
+      // Update path line
+      this.updateWaypointPath()
+      return
+    }
+
+    // Hover detection
+    const markerIdx = this.hitTestWaypoints(e)
+    if (markerIdx !== this.hoveredMarker) {
+      // Unhover previous
+      if (this.hoveredMarker >= 0 && this.hoveredMarker < this.waypointMarkers.length) {
+        const mat = this.waypointMarkers[this.hoveredMarker].material as THREE.MeshBasicMaterial
+        mat.color.setHex(WP_COLOR)
+      }
+      // Hover new
+      if (markerIdx >= 0) {
+        const mat = this.waypointMarkers[markerIdx].material as THREE.MeshBasicMaterial
+        mat.color.setHex(WP_COLOR_HOVER)
+        this.container.style.cursor = 'grab'
+      } else {
+        this.container.style.cursor = ''
+      }
+      this.hoveredMarker = markerIdx
+    }
+  }
+
+  private onPointerUp(_e: PointerEvent): void {
+    if (this.dragState) {
+      this.dragState = null
+      this.controls.enabled = true
+      this.container.style.cursor = ''
+      this.rebuildWaypointVisuals()  // rebuild verticals + rings
+      this.fireWaypointChange()
+    }
+  }
+
+  private updateWaypointPath(): void {
+    if (!this.waypointPath) return
+    const points = this.waypointData.map(
+      wp => new THREE.Vector3(wp.x, wp.y, wp.z),
+    )
+    this.waypointPath.geometry.setFromPoints(points)
+    this.waypointPath.computeLineDistances()
+  }
+
+  private fireWaypointChange(): void {
+    if (this.waypointChangeCallback) {
+      this.waypointChangeCallback(this.getWaypoints())
+    }
+  }
+
+  /** Render a single frame (for waypoint mode without scenarios). */
+  renderOnce(): void {
+    this.controls.update()
     this.renderer.render(this.scene, this.camera)
     this.labelRenderer.render(this.scene, this.camera)
   }

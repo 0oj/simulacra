@@ -64,6 +64,7 @@ class MessageType(str, Enum):
     CONSTANT = "constant"
     VARIABLE = "variable"
     DEBUG = "debug"
+    ML_DEBUG = "ml_debug"
 
 
 class BaseMessage(BaseModel):
@@ -312,6 +313,37 @@ class DebugMessage(BaseMessage):
     )
 
 
+class MLDebugMessage(BaseMessage):
+    """Per-frame ML debug data for reward/action/feature visualization."""
+
+    message_type: Literal[MessageType.ML_DEBUG] = MessageType.ML_DEBUG
+
+    timestamp: float = Field(
+        description="Simulation time (seconds)."
+    )
+
+    # Reward breakdown
+    reward_total: float = Field(description="Total reward this step.")
+    reward_components: dict[str, float] = Field(
+        description="Named reward components, e.g. {'approach': 0.12, 'brake': -0.05}."
+    )
+
+    # Agent actions (post-guidance-wrapper)
+    action_throttle: float = Field(description="Throttle command [0, 1].")
+    action_tilt_x: float = Field(description="Tilt X command [-1, 1].")
+    action_tilt_z: float = Field(description="Tilt Z command [-1, 1].")
+
+    # Derived features
+    dist_to_target: float = Field(description="Distance to current waypoint (m).")
+    vel_toward: float = Field(description="Velocity toward waypoint (m/s).")
+    brake_margin: float = Field(description="Braking safety margin (m).")
+    tilt_angle: float = Field(description="Tilt from vertical (rad).")
+    omega_mag: float = Field(description="Angular velocity magnitude (rad/s).")
+
+    # Target waypoint
+    target: list[float] = Field(description="Target waypoint [x, y, z].")
+
+
 # ============================================================================
 # Auto-Collection
 # ============================================================================
@@ -359,7 +391,7 @@ def collect(message_cls: type[BaseMessage], timestamp: float, **roots: Any) -> B
 # Union Type
 # ============================================================================
 
-SimMessage = Union[ConstantMessage, VariableMessage, MetadataMessage, DebugMessage]
+SimMessage = Union[ConstantMessage, VariableMessage, MetadataMessage, DebugMessage, MLDebugMessage]
 
 
 # ============================================================================
@@ -423,5 +455,7 @@ def read_message(stream=None) -> SimMessage:
         return MetadataMessage(**data)
     elif msg_type == MessageType.DEBUG:
         return DebugMessage(**data)
+    elif msg_type == MessageType.ML_DEBUG:
+        return MLDebugMessage(**data)
     else:
         raise ValueError(f"Unknown message type: {msg_type}")

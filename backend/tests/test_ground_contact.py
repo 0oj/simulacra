@@ -156,25 +156,23 @@ def test_grounded_rocket_lifts_off_with_sufficient_thrust():
 
 
 def test_ground_contact_freezes_all_velocities():
-    """Ground contact immediately freezes all velocities regardless of thrust."""
+    """Ground contact freezes velocities when thrust < weight."""
     tilt_angle = np.radians(80.0)  # 10 degrees from upright
     orientation = Orientation.from_axis_angle([0.0, 0.0, 1.0], tilt_angle)
 
-    # With thrust case
+    # With thrust below weight: rocket stays grounded
     rocket, env = _make_grounded_rocket(orientation)
-    # Weight = 10 * 9.81 = 98.1 N. Apply 90 N along body +X.
+    # Weight = 10 * 9.81 = 98.1 N. Apply 90 N along body +X (< weight).
     rocket.state.thrust_body = RocketVec3(90.0, 0.0, 0.0)
     k = Kernel(rocket, env)
 
     dt = 0.01
     k.step(dt)
 
-    # Ground contact should freeze everything
+    # Ground contact should freeze velocities (thrust_body is left for actuators to manage)
     assert k.ground_contact.on_ground
     np.testing.assert_allclose(rocket.state.velocity.norm, 0.0, atol=1e-12)
     np.testing.assert_allclose(rocket.state.angular_velocity_body.norm, 0.0, atol=1e-12)
-    # Thrust is also zeroed
-    np.testing.assert_allclose(rocket.state.thrust_body.norm, 0.0, atol=1e-12)
 
 
 def test_impact_metrics_latched_on_touchdown():

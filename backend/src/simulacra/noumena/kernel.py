@@ -154,13 +154,25 @@ class Kernel:
                 if tilt_angle > gc.MAX_LANDING_TILT:
                     gc.tipped_over = True
 
-            # Freeze state: landing is instantaneous, no ground physics simulation
-            s.position.y = 0.0
-            s.velocity = WorldVec3(0.0, 0.0, 0.0)
-            s.angular_velocity_body = RocketVec3(0.0, 0.0, 0.0)
-            s.thrust_body = RocketVec3(0.0, 0.0, 0.0)
-
-            self.ground_contact.on_ground = True
+            # Check if thrust exceeds weight → allow liftoff
+            thrust_world = s.thrust_body.to_world(s.orientation)
+            thrust_up = thrust_world.y
+            weight = p.mass * abs(env.gravity.y)
+            if thrust_up > weight:
+                # Liftoff: rocket has enough thrust to leave the ground
+                s.position.y = 0.0  # clamp to ground plane
+                # Keep velocity (thrust built it up) but zero downward component
+                if s.velocity.y < 0.0:
+                    s.velocity.y = 0.0
+                self.ground_contact.on_ground = False
+                if not was_airborne:
+                    pass  # was already on ground, now lifting off
+            else:
+                # Stay on ground: freeze state
+                s.position.y = 0.0
+                s.velocity = WorldVec3(0.0, 0.0, 0.0)
+                s.angular_velocity_body = RocketVec3(0.0, 0.0, 0.0)
+                self.ground_contact.on_ground = True
         else:
             # Airborne — reset metrics if transitioning from ground
             if self.ground_contact.on_ground:

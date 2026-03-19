@@ -1,6 +1,8 @@
 import type {
   FlightData,
   FlightFrame,
+  MLDebugFrame,
+  MLDebugMessage,
   SimMessage,
   VariableMessage,
 } from './types'
@@ -23,6 +25,7 @@ export function parseNDJSON(text: string): FlightData {
   let wind: [number, number, number] | null = null
   const frames: FlightFrame[] = []
   const debugMsgs: FlightData['debugMsgs'] = []
+  const mlDebugByTime = new Map<number, MLDebugFrame>()
 
   const lines = text.split('\n')
   for (const raw of lines) {
@@ -45,6 +48,24 @@ export function parseNDJSON(text: string): FlightData {
       case 'debug':
         debugMsgs.push({ time: msg.timestamp, text: msg.text })
         break
+
+      case 'ml_debug': {
+        const m = msg as MLDebugMessage
+        mlDebugByTime.set(m.timestamp, {
+          rewardTotal: m.reward_total,
+          rewardComponents: m.reward_components,
+          actionThrottle: m.action_throttle,
+          actionTiltX: m.action_tilt_x,
+          actionTiltZ: m.action_tilt_z,
+          distToTarget: m.dist_to_target,
+          velToward: m.vel_toward,
+          brakeMargin: m.brake_margin,
+          tiltAngle: m.tilt_angle,
+          omegaMag: m.omega_mag,
+          target: m.target as [number, number, number],
+        })
+        break
+      }
 
       case 'variable': {
         const v = msg as VariableMessage
@@ -89,9 +110,18 @@ export function parseNDJSON(text: string): FlightData {
           impactSpeed: v.impact_speed ?? null,
           impactVerticalSpeed: v.impact_vertical_speed ?? null,
           landingAngle: v.landing_angle ?? null,
+          mlDebug: null,
         })
         break
       }
+    }
+  }
+
+  // Attach ML debug data to matching frames by timestamp
+  if (mlDebugByTime.size > 0) {
+    for (const frame of frames) {
+      const ml = mlDebugByTime.get(frame.time)
+      if (ml) frame.mlDebug = ml
     }
   }
 

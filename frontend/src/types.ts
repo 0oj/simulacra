@@ -62,11 +62,28 @@ export interface DebugMessage {
   text: string
 }
 
+export interface MLDebugMessage {
+  message_type: 'ml_debug'
+  timestamp: number
+  reward_total: number
+  reward_components: Record<string, number>
+  action_throttle: number
+  action_tilt_x: number
+  action_tilt_z: number
+  dist_to_target: number
+  vel_toward: number
+  brake_margin: number
+  tilt_angle: number
+  omega_mag: number
+  target: [number, number, number]
+}
+
 export type SimMessage =
   | MetadataMessage
   | ConstantMessage
   | VariableMessage
   | DebugMessage
+  | MLDebugMessage
 
 // ============================================================================
 // Parsed flight data
@@ -100,6 +117,23 @@ export interface FlightFrame {
   impactSpeed: number | null
   impactVerticalSpeed: number | null
   landingAngle: number | null
+
+  // ML debug (from ml_debug messages, matched by timestamp)
+  mlDebug: MLDebugFrame | null
+}
+
+export interface MLDebugFrame {
+  rewardTotal: number
+  rewardComponents: Record<string, number>
+  actionThrottle: number
+  actionTiltX: number
+  actionTiltZ: number
+  distToTarget: number
+  velToward: number
+  brakeMargin: number
+  tiltAngle: number
+  omegaMag: number
+  target: [number, number, number]
 }
 
 export interface FlightData {
@@ -237,8 +271,56 @@ export const CHART_DEFS: ChartDef[] = [
 ]
 
 // ============================================================================
-// Scenario colors
+// ML debug chart definitions
 // ============================================================================
+
+export const ML_CHART_DEFS: ChartDef[] = [
+  {
+    id: 'reward',
+    label: 'REWARD',
+    unit: '',
+    extract: (f) => {
+      if (!f.mlDebug) return 0
+      const c = f.mlDebug.rewardComponents
+      return [c.approach ?? 0, c.brake ?? 0, c.hover ?? 0, c.tilt ?? 0, c.smooth ?? 0]
+    },
+    componentLabels: ['approach', 'brake', 'hover', 'tilt', 'smooth'],
+  },
+  {
+    id: 'reward-total',
+    label: 'R_total',
+    unit: '',
+    extract: (f) => f.mlDebug?.rewardTotal ?? 0,
+  },
+  {
+    id: 'ml-dist',
+    label: 'D_wp',
+    unit: 'm',
+    extract: (f) => f.mlDebug?.distToTarget ?? 0,
+  },
+  {
+    id: 'ml-action',
+    label: 'ACTION',
+    unit: '',
+    extract: (f) => {
+      if (!f.mlDebug) return [0, 0, 0]
+      return [f.mlDebug.actionThrottle, f.mlDebug.actionTiltX, f.mlDebug.actionTiltZ]
+    },
+    componentLabels: ['throttle', 'tilt_x', 'tilt_z'],
+  },
+  {
+    id: 'ml-brake',
+    label: 'BRAKE',
+    unit: '',
+    extract: (f) => {
+      if (!f.mlDebug) return [0, 0]
+      const speed = Math.hypot(f.velocity[0], f.velocity[1], f.velocity[2])
+      const vSafe = Math.sqrt(2 * 8.0 * Math.max(0.1, f.mlDebug.distToTarget))
+      return [speed, vSafe]
+    },
+    componentLabels: ['speed', 'v_safe'],
+  },
+]
 
 // ============================================================================
 // Polar (bull's-eye) chart definitions

@@ -360,6 +360,7 @@ class JaxVecEnv:
         # Build SB3-compatible infos
         landed_np = np.asarray(info["landed"])
         crashed_np = np.asarray(info["crashed"])
+        truncated_np = np.asarray(info["truncated"])
         impact_np = np.asarray(info["impact_speed"])
         dist_np = np.asarray(info["horiz_dist"])
 
@@ -376,6 +377,9 @@ class JaxVecEnv:
                 # SB3 expects terminal_observation for auto-reset envs
                 d["terminal_observation"] = obs_np[i]
                 d["episode"] = {"r": float(rewards_np[i]), "l": 0}
+                # SB3 uses this to bootstrap V(terminal) for truncated episodes
+                if truncated_np[i]:
+                    d["TimeLimit.truncated"] = True
             infos.append(d)
 
         # For done envs, return the RESET observation (SB3 convention)

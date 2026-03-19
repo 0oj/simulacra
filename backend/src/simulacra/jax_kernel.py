@@ -132,43 +132,31 @@ def nozzle_direction_body(outer_angle, inner_angle):
 def compute_mass_properties(fuel_mass, params):
     """Compute total mass, CoM, and inertia from current fuel mass.
 
-    Rocket has 4 components along body X-axis:
-      structure: 0.6 * dry_mass at 0.3 * length
-      engine:    0.3 * dry_mass at 0.0
-      nose:      0.1 * dry_mass at 0.9 * length
-      fuel:      fuel_mass      at 0.3 * length
+    2-component model matching NumPy kernel (gym_env.py / hopper_env.py):
+      dry:  dry_mass at length/2     (centre of rocket)
+      fuel: fuel_mass at 0.3*length  (forward of engine)
 
     Returns: (total_mass, com_x, Ix, Iy, Iz)
     """
     dry = params["dry_mass"]
     length = params["length"]
 
-    # Component masses and X-positions (Y, Z = 0 for all)
-    masses = jnp.array([
-        0.6 * dry,    # structure
-        0.3 * dry,    # engine
-        0.1 * dry,    # nose
-        fuel_mass,    # fuel
-    ])
-    positions_x = jnp.array([
-        0.3 * length,   # structure
-        0.0,            # engine
-        0.9 * length,   # nose
-        0.3 * length,   # fuel
-    ])
+    # 2-component model — matches NumPy MassModel exactly
+    masses = jnp.array([dry, fuel_mass])
+    positions_x = jnp.array([length / 2, 0.3 * length])
 
     total_mass = jnp.sum(masses)
     com_x = jnp.sum(masses * positions_x) / total_mass
 
     # Parallel-axis theorem (all components on X-axis, so dy=dz=0)
-    # Ix = sum(m * (dy² + dz²)) = 0 (all on axis)
-    # Iy = Iz = sum(m * dx²) where dx = pos_x - com_x
     dx = positions_x - com_x
     Iy = jnp.sum(masses * dx**2)
     Iz = Iy  # axial symmetry
 
-    # Minimum inertia floor (prevents singularities)
-    min_inertia = 0.01 * total_mass * length**2
+    # Minimum inertia floor — matches NumPy inertia.py:
+    # min_ix_fraction * total_m * max(1.0, max_dist_sq)
+    max_dist_sq = jnp.max(dx**2)
+    min_inertia = 0.01 * total_mass * jnp.maximum(1.0, max_dist_sq)
     Ix = min_inertia  # roll axis — always at floor for slender rocket
     Iy = jnp.maximum(Iy, min_inertia)
     Iz = jnp.maximum(Iz, min_inertia)
@@ -457,6 +445,7 @@ def physics_step(state, action, params, rng_key):
     info = {
         "landed": landed_ok,
         "crashed": crashed | tipped,
+        "truncated": truncated & ~terminated,  # for SB3 TimeLimit handling
         "impact_speed": jnp.where(just_landed, impact_speed, 0.0),
         "tilt_angle": tilt_angle,
         "horiz_dist": horiz_dist,
@@ -482,8 +471,8 @@ def default_params(
     max_gimbal=0.26,
     gimbal_rate=1.0,
     gimbal_tau=0.05,
-    max_thrust_rate=10000.0,
-    min_thrust=50.0,
+    max_thrust_rate=4000.0,   # max_thrust * 2 — matches NumPy env (0→100% in 0.5s)
+    min_thrust=0.0,           # no deadband — matches NumPy env
     # Landing
     max_landing_speed=3.0,
     max_landing_tilt=0.26,
