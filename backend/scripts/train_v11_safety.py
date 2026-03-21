@@ -112,6 +112,7 @@ def _signal_handler(signum, frame):
 def hopper_eval(trainer, n_episodes=200, max_steps=750, **env_kwargs):
     """Fast batched evaluation using pure-JAX PPO inference."""
     from simulacra.jax_hopper_env import JaxHopperVecEnv
+    from simulacra.eval_metrics import compute_smoothness_metrics, aggregate_smoothness_metrics
 
     eval_env = JaxHopperVecEnv(
         num_envs=n_episodes,
@@ -131,12 +132,21 @@ def hopper_eval(trainer, n_episodes=200, max_steps=750, **env_kwargs):
     landed = np.zeros(n_episodes, dtype=bool)
     crashed = np.zeros(n_episodes, dtype=bool)
 
-    for _ in range(max_steps):
+    # Collect actions for smoothness metrics
+    all_actions = np.zeros((max_steps, n_episodes, 3), dtype=np.float32)
+    episode_lengths = np.zeros(n_episodes, dtype=int)
+
+    for step in range(max_steps):
         actions = trainer.predict(obs, deterministic=True)
+        actions_np = np.asarray(actions)
+        all_actions[step] = actions_np
+
         obs_np, _, step_dones, infos = eval_env.step(actions)
         obs = jnp.array(obs_np)
 
         for i in range(n_episodes):
+            if not done_mask[i]:
+                episode_lengths[i] = step + 1
             if step_dones[i] and not done_mask[i]:
                 done_mask[i] = True
                 outcome = infos[i].get("outcome", "")
@@ -150,6 +160,15 @@ def hopper_eval(trainer, n_episodes=200, max_steps=750, **env_kwargs):
         if np.all(done_mask):
             break
 
+    # Compute smoothness metrics per episode, then aggregate
+    episode_metrics = []
+    for i in range(n_episodes):
+        T = episode_lengths[i]
+        if T >= 2:
+            ep_actions = all_actions[:T, i, :]  # (T, 3)
+            episode_metrics.append(compute_smoothness_metrics(ep_actions))
+    smoothness = aggregate_smoothness_metrics(episode_metrics)
+
     arrive_rate = float(np.sum(arrived)) / n_episodes
     land_rate = float(np.sum(landed)) / n_episodes
     crash_rate = float(np.sum(crashed)) / n_episodes
@@ -160,6 +179,9 @@ def hopper_eval(trainer, n_episodes=200, max_steps=750, **env_kwargs):
         "crash_rate": crash_rate,
         "total_ok": total_ok,
         "total": n_episodes,
+        "mean_reversals": smoothness["mean_reversals"],
+        "mean_rms_throttle_rate": smoothness["mean_rms_throttle_rate"],
+        "mean_gimbal_rate": smoothness["mean_gimbal_rate"],
     }
 
 
@@ -175,7 +197,10 @@ def full_eval(trainer, save_dir, stage_name):
         results["scenarios"][name] = r
         pct = 100 * (r["arrive_rate"] + r["land_rate"])
         print(f"    {name}: {r['total_ok']}/{r['total']} "
-              f"({pct:.0f}% ok, {100*r['crash_rate']:.0f}% crash)")
+              f"({pct:.0f}% ok, {100*r['crash_rate']:.0f}% crash) "
+              f"| rev={r['mean_reversals']:.0f} "
+              f"thr_rms={r['mean_rms_throttle_rate']:.4f} "
+              f"gim={r['mean_gimbal_rate']:.4f}")
 
     with open(save_dir / "results.jsonl", "a") as f:
         f.write(json.dumps(results) + "\n")
@@ -387,7 +412,10 @@ def main():
     print(f"  Total time: {total_elapsed:.0f} min")
     for name, r in final["scenarios"].items():
         pct = 100 * (r["arrive_rate"] + r["land_rate"])
-        print(f"  {name}: {pct:.0f}% ok ({100*r['crash_rate']:.0f}% crash)")
+        print(f"  {name}: {pct:.0f}% ok ({100*r['crash_rate']:.0f}% crash) "
+              f"| rev={r['mean_reversals']:.0f} "
+              f"thr_rms={r['mean_rms_throttle_rate']:.4f} "
+              f"gim={r['mean_gimbal_rate']:.4f}")
 
     config_dict["completed"] = datetime.now().isoformat()
     config_dict["elapsed_min"] = round(total_elapsed, 1)

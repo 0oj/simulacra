@@ -37,7 +37,7 @@ def all_scenarios_env():
 class TestObservationSpace:
     def test_obs_shape(self, env):
         obs, _ = env.reset(seed=42)
-        assert obs.shape == (19,), f"Expected 19-dim obs, got {obs.shape}"
+        assert obs.shape == (22,), f"Expected 22-dim obs, got {obs.shape}"
 
     def test_obs_in_bounds(self, env):
         obs, _ = env.reset(seed=42)

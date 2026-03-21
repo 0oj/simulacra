@@ -6,10 +6,11 @@ The policy learns a universal "go to position" skill. Waypoint sequencing
 (hold timers, acceptance radius, advancement) is managed externally at
 inference time by the RLHopperController.
 
-Observation (19-dim):
+Observation (22-dim):
     [x, y, z, vx, vy, vz, qw, qx, qy, qz, wx, wy, wz,   # base state (13)
      dx, dy, dz,                                            # goal-relative (3)
-     dist_to_wp, vel_toward, brake_margin_wp]               # features (3)
+     dist_to_wp, vel_toward, brake_margin_wp,               # features (3)
+     is_track, is_land, is_liftoff]                         # flight mode (3)
 
 Action (3-dim): [throttle, gimbal_outer, gimbal_inner]
     Designed to be wrapped with GuidanceWrapper for [throttle, tilt_x, tilt_z].
@@ -268,7 +269,7 @@ class HopperTrackingEnv(gym.Env):
             high=np.array([1.0, 1.0, 1.0], dtype=np.float32),
         )
 
-        # Observation space: base_state(13) + goal_rel(3) + features(3) = 19
+        # Observation space: base_state(13) + goal_rel(3) + features(3) + mode(3) = 22
         alt_bound = max(150.0, self.max_altitude * 1.2)
         vel_bound = max(50.0, math.sqrt(2 * 9.81 * self.max_altitude) * 1.2)
         dist_bound = 200.0
@@ -280,6 +281,7 @@ class HopperTrackingEnv(gym.Env):
             -10, -10, -10,                            # angular velocity
             -dist_bound, -dist_bound, -dist_bound,    # goal relative
             0.0, -vel_bound, -dist_bound,             # features
+            0, 0, 0,                                  # mode one-hot
         ], dtype=np.float32)
 
         obs_high = np.array([
@@ -289,6 +291,7 @@ class HopperTrackingEnv(gym.Env):
             10, 10, 10,
             dist_bound, dist_bound, dist_bound,
             dist_bound, vel_bound, dist_bound,
+            1, 1, 1,                                  # mode one-hot
         ], dtype=np.float32)
 
         self.observation_space = spaces.Box(low=obs_low, high=obs_high)
@@ -456,6 +459,12 @@ class HopperTrackingEnv(gym.Env):
         speed = np.linalg.norm(vel_vec)
         brake_margin = dist - speed**2 / (2 * self.A_MAX)
 
+        # Flight mode (one-hot): TRACK, LAND, LIFTOFF
+        is_land = self._target[1] < 1.0
+        on_ground = self._kernel.ground_contact.on_ground
+        is_liftoff = on_ground and not is_land
+        is_track = not is_land and not is_liftoff
+
         return np.array([
             gps.x, alt, gps.z,
             vel.x, vel.y, vel.z,
@@ -463,6 +472,7 @@ class HopperTrackingEnv(gym.Env):
             omega.x, omega.y, omega.z,
             goal_rel[0], goal_rel[1], goal_rel[2],
             dist, vel_toward, brake_margin,
+            float(is_track), float(is_land), float(is_liftoff),
         ], dtype=np.float32)
 
     def _get_tilt_angle(self) -> float:
@@ -540,8 +550,8 @@ class HopperTrackingEnv(gym.Env):
         if dist < 3.0:
             r_hover = 0.15 * max(0.0, 1.0 - speed / 1.5)
 
-        # 4. Uprightness (strengthened: 0.05 → 0.08)
-        r_tilt = -0.08 * tilt ** 2
+        # 4. Uprightness (strengthened: 0.08 → 0.20 to prevent dangerous tilts)
+        r_tilt = -0.20 * tilt ** 2
 
         # 5. Smoothness (all penalties 2-3x stronger)
         r_smooth = (
@@ -615,8 +625,9 @@ class HopperTrackingEnv(gym.Env):
 
         # Crash: ground contact when target is in the air
         if not is_landing_wp and ground.on_ground and state.position.y <= 0.01:
-            # Only crash if we're not starting on the ground (liftoff scenario)
-            if self._step_count > 5:  # give a few steps for liftoff
+            # Grace period must exceed thrust ramp time: at max_thrust_rate=4000 N/s,
+            # reaching hover thrust (1373N for 140kg) takes ~18 steps (0.36s).
+            if self._step_count > 50:
                 terminated = True
                 info["outcome"] = "crash"
 

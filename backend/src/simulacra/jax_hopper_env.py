@@ -10,13 +10,14 @@ Architecture:
            └─ hopper_physics_step  ← jit + vmap
                 └─ jax_kernel.py physics primitives (actuators, mass, quat, etc.)
 
-Observation (28-dim):
+Observation (28-dim default, 22-dim when include_safety_obs=False):
     [x, y, z, vx, vy, vz, qw, qx, qy, qz, wx, wy, wz,   # base state (13)
      dx, dy, dz,                                            # goal-relative (3)
      dist_to_wp, vel_toward, brake_margin_wp,               # features (3)
      is_track, is_land, is_liftoff,                         # flight mode (3)
-     throttle_sat, gimbal_outer_sat, gimbal_inner_sat,      # actuator feedback (3)
-     speed_ratio, tilt_margin, descent_ratio]               # state envelope (3)
+     throttle_sat, gimbal_outer_sat, gimbal_inner_sat,      # actuator feedback (3)  *
+     speed_ratio, tilt_margin, descent_ratio]               # state envelope (3)     *
+    (* safety dims 22-27 omitted when include_safety_obs=False)
 
 Action (3-dim): [throttle, gimbal_outer, gimbal_inner]
     Designed to be used with guidance wrapper (PD inner loop).
@@ -326,7 +327,7 @@ def hopper_physics_step(state, action, params, rng_key):
             pos (3,), vel (3,), quat (4,), omega (3,),
             gimbal_outer, gimbal_inner, actual_thrust,
             fuel_mass, on_ground, step_count,
-            target (3,), prev_dist, prev_throttle, prev_omega_mag
+            target (3,), prev_dist, prev_throttle, prev_prev_throttle, prev_omega_mag
         action: (3,) array [throttle_norm, gimbal_outer_norm, gimbal_inner_norm]
         params: dict of static parameters
         rng_key: JAX PRNG key
@@ -585,13 +586,24 @@ def hopper_physics_step(state, action, params, rng_key):
     gimbal_outer_sat_c = jnp.clip(gimbal_outer_sat, -3.0, 3.0)
     gimbal_inner_sat_c = jnp.clip(gimbal_inner_sat, -3.0, 3.0)
     descent_excess = jnp.maximum(0.0, jnp.maximum(0.0, -vel_new[1]) - v_safe_vert)
+    safety_w_throttle = params.get("safety_w_throttle", 0.02)
+    safety_w_gimbal = params.get("safety_w_gimbal", 0.01)
+    safety_w_descent = params.get("safety_w_descent", 0.1)
     r_safety = (
-        -0.02 * throttle_sat_c ** 2
-        - 0.01 * (gimbal_outer_sat_c ** 2 + gimbal_inner_sat_c ** 2)
-        - 0.1 * descent_excess ** 2
+        -safety_w_throttle * throttle_sat_c ** 2
+        - safety_w_gimbal * (gimbal_outer_sat_c ** 2 + gimbal_inner_sat_c ** 2)
+        - safety_w_descent * descent_excess ** 2
     )
 
-    dense_reward = r_approach + r_brake + r_hover + r_tilt + r_smooth + r_gimbal + r_fuel + r_safety
+    # 9. Thrust reversal penalty (penalises sign change in throttle delta)
+    prev_prev_throttle = state["prev_prev_throttle"]
+    dthrottle = throttle_norm - prev_throttle
+    prev_dthrottle = prev_throttle - prev_prev_throttle
+    reversal_signal = jnp.minimum(0.0, dthrottle * prev_dthrottle)
+    reversal_w = params.get("reversal_w", 0.0)
+    r_reversal = reversal_w * reversal_signal
+
+    dense_reward = r_approach + r_brake + r_hover + r_tilt + r_smooth + r_gimbal + r_fuel + r_safety + r_reversal
 
     # ── Termination ──
     step_count = state["step_count"] + 1
@@ -656,6 +668,7 @@ def hopper_physics_step(state, action, params, rng_key):
         "step_count": step_count,
         "target": target,
         "prev_dist": dist,
+        "prev_prev_throttle": prev_throttle,  # shift: old prev becomes prev_prev
         "prev_throttle": throttle_norm,
         "prev_omega_mag": omega_mag,
         "prev_gimbal_outer": gimbal_outer,
@@ -733,6 +746,7 @@ def make_hopper_initial_state(
         "step_count": jnp.int32(0),
         "target": target,
         "prev_dist": dist,
+        "prev_prev_throttle": 0.0,
         "prev_throttle": 0.0,
         "prev_omega_mag": 0.0,
         "prev_gimbal_outer": 0.0,
@@ -893,11 +907,24 @@ class JaxHopperVecEnv:
         max_episode_steps: int = 500,
         max_altitude: float = 100.0,
         seed: int = 0,
+        include_safety_obs: bool = True,
+        safety_reward_weights: Optional[dict] = None,
+        reversal_penalty_weight: float = 0.0,
         **param_overrides,
     ):
         self.num_envs = num_envs
         self.use_guidance = use_guidance
         self.max_tilt = max_tilt
+        self.include_safety_obs = include_safety_obs
+
+        # Safety reward weights (default to existing hardcoded values)
+        _srw = safety_reward_weights or {}
+        self._safety_w_throttle = _srw.get("throttle", 0.02)
+        self._safety_w_gimbal = _srw.get("gimbal", 0.01)
+        self._safety_w_descent = _srw.get("descent", 0.1)
+
+        # Reversal penalty weight (0 = disabled for backwards compat)
+        self._reversal_w = reversal_penalty_weight
 
         # Scenario setup
         if scenarios is None:
@@ -931,17 +958,22 @@ class JaxHopperVecEnv:
             init_fuel_hi=init_fuel_range[1],
             **param_overrides,
         )
+        # Inject safety/reversal weights into params (read by hopper_physics_step)
+        self.params["safety_w_throttle"] = self._safety_w_throttle
+        self.params["safety_w_gimbal"] = self._safety_w_gimbal
+        self.params["safety_w_descent"] = self._safety_w_descent
+        self.params["reversal_w"] = self._reversal_w
 
         # PRNG
         self.rng = jax.random.PRNGKey(seed)
 
-        # Observation space: 28-dim (22 base + 6 safety envelope)
-        self._obs_dim = 28
+        # Observation space: 28-dim (22 base + 6 safety envelope) or 22-dim
+        self._obs_dim = 28 if self.include_safety_obs else 22
         vel_bound = max(50.0, math.sqrt(2 * 9.81 * max_altitude) * 1.2)
         alt_bound = max(150.0, max_altitude * 1.2)
         dist_bound = 200.0
 
-        self.obs_low = np.array([
+        base_low = [
             -100, -10, -100,                           # position
             -vel_bound, -vel_bound, -vel_bound,        # velocity
             -1, -1, -1, -1,                            # quaternion
@@ -949,11 +981,8 @@ class JaxHopperVecEnv:
             -dist_bound, -dist_bound, -dist_bound,     # goal relative
             0.0, -vel_bound, -dist_bound,              # features
             0, 0, 0,                                   # mode one-hot
-            -3, -3, -3,                                # actuator saturation
-            0, 0, 0,                                   # state envelope
-        ], dtype=np.float32)
-
-        self.obs_high = np.array([
+        ]
+        base_high = [
             100, alt_bound, 100,
             vel_bound, vel_bound, vel_bound,
             1, 1, 1, 1,
@@ -961,9 +990,14 @@ class JaxHopperVecEnv:
             dist_bound, dist_bound, dist_bound,
             dist_bound, vel_bound, dist_bound,
             1, 1, 1,                                   # mode one-hot
-            3, 3, 3,                                   # actuator saturation
-            3, 1, 3,                                   # state envelope
-        ], dtype=np.float32)
+        ]
+
+        if self.include_safety_obs:
+            base_low += [-3, -3, -3, 0, 0, 0]         # actuator sat + state envelope
+            base_high += [3, 3, 3, 3, 1, 3]           # actuator sat + state envelope
+
+        self.obs_low = np.array(base_low, dtype=np.float32)
+        self.obs_high = np.array(base_high, dtype=np.float32)
 
         # State
         self._state = None
@@ -1062,10 +1096,11 @@ class JaxHopperVecEnv:
         _max_thrust_delta = params["max_thrust_rate"] * _dt
         _max_gimbal_delta = params["gimbal_rate"] * _dt
         _max_tilt = params["max_tilt"]
+        _include_safety = self.include_safety_obs
 
         @jax.jit
         def _state_to_obs_batched(state):
-            """Extract 28-dim observation from batched state."""
+            """Extract observation from batched state (28 or 22 dim)."""
             pos = state["pos"]      # (N, 3)
             vel = state["vel"]      # (N, 3)
             quat = state["quat"]    # (N, 4)
@@ -1090,43 +1125,46 @@ class JaxHopperVecEnv:
                 jnp.float32(is_liftoff),
             ], axis=-1)
 
-            # Safety envelope signals (6 dims)
-            throttle_sat = (state["cmd_thrust"] - state["actual_thrust"]) / jnp.maximum(_max_thrust_delta, 1e-6)
-            gimbal_outer_sat = (state["cmd_gimbal_outer"] - state["gimbal_outer"]) / jnp.maximum(_max_gimbal_delta, 1e-6)
-            gimbal_inner_sat = (state["cmd_gimbal_inner"] - state["gimbal_inner"]) / jnp.maximum(_max_gimbal_delta, 1e-6)
-
-            v_safe = jnp.sqrt(2.0 * MAX_DECEL * jnp.maximum(0.1, dist))
-            speed_ratio = jnp.clip(speed / jnp.maximum(v_safe, 0.1), 0.0, 3.0)
-
-            # Tilt: vectorized quaternion rotation (no nested vmap)
-            # R[1,0] = 2(xy + wz) = Y component of body X-axis in world frame
-            qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
-            cos_tilt = jnp.clip(2.0 * (qx * qy + qw * qz), -1.0, 1.0)
-            tilt_angle = jnp.arccos(cos_tilt)
-            tilt_margin = jnp.clip(1.0 - tilt_angle / _max_tilt, 0.0, 1.0)
-
-            v_safe_vert = jnp.sqrt(2.0 * A_MAX * jnp.maximum(pos[:, 1], 0.1))
-            descent_ratio = jnp.clip(
-                jnp.maximum(0.0, -vel[:, 1]) / jnp.maximum(v_safe_vert, 0.1),
-                0.0, 3.0,
-            )
-
-            safety = jnp.stack([
-                jnp.clip(throttle_sat, -3.0, 3.0),
-                jnp.clip(gimbal_outer_sat, -3.0, 3.0),
-                jnp.clip(gimbal_inner_sat, -3.0, 3.0),
-                speed_ratio.squeeze(-1),
-                tilt_margin,
-                descent_ratio,
-            ], axis=-1)
-
-            return jnp.concatenate([
+            parts = [
                 pos, vel, quat, omega,
                 goal_rel,
                 dist, vel_toward, brake_margin,
                 mode_onehot,
-                safety,
-            ], axis=-1)
+            ]
+
+            if _include_safety:
+                # Safety envelope signals (6 dims)
+                throttle_sat = (state["cmd_thrust"] - state["actual_thrust"]) / jnp.maximum(_max_thrust_delta, 1e-6)
+                gimbal_outer_sat = (state["cmd_gimbal_outer"] - state["gimbal_outer"]) / jnp.maximum(_max_gimbal_delta, 1e-6)
+                gimbal_inner_sat = (state["cmd_gimbal_inner"] - state["gimbal_inner"]) / jnp.maximum(_max_gimbal_delta, 1e-6)
+
+                v_safe = jnp.sqrt(2.0 * MAX_DECEL * jnp.maximum(0.1, dist))
+                speed_ratio = jnp.clip(speed / jnp.maximum(v_safe, 0.1), 0.0, 3.0)
+
+                # Tilt: vectorized quaternion rotation (no nested vmap)
+                # R[1,0] = 2(xy + wz) = Y component of body X-axis in world frame
+                qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+                cos_tilt = jnp.clip(2.0 * (qx * qy + qw * qz), -1.0, 1.0)
+                tilt_angle = jnp.arccos(cos_tilt)
+                tilt_margin = jnp.clip(1.0 - tilt_angle / _max_tilt, 0.0, 1.0)
+
+                v_safe_vert = jnp.sqrt(2.0 * A_MAX * jnp.maximum(pos[:, 1], 0.1))
+                descent_ratio = jnp.clip(
+                    jnp.maximum(0.0, -vel[:, 1]) / jnp.maximum(v_safe_vert, 0.1),
+                    0.0, 3.0,
+                )
+
+                safety = jnp.stack([
+                    jnp.clip(throttle_sat, -3.0, 3.0),
+                    jnp.clip(gimbal_outer_sat, -3.0, 3.0),
+                    jnp.clip(gimbal_inner_sat, -3.0, 3.0),
+                    speed_ratio.squeeze(-1),
+                    tilt_margin,
+                    descent_ratio,
+                ], axis=-1)
+                parts.append(safety)
+
+            return jnp.concatenate(parts, axis=-1)
 
         self._state_to_obs_jit = _state_to_obs_batched
 
@@ -1183,8 +1221,10 @@ class JaxHopperVecEnv:
             fresh_state, new_state,
         )
 
-        # Convert to NumPy
+        # Convert to NumPy (truncate safety dims if not included)
         obs_np = np.asarray(obs)
+        if not self.include_safety_obs:
+            obs_np = obs_np[:, :22]
         rewards_np = np.asarray(rewards).astype(np.float32)
         dones_np = np.asarray(dones)
 
@@ -1229,6 +1269,10 @@ class JaxHopperVecEnv:
 
     def close(self):
         pass
+
+    @property
+    def obs_dim(self):
+        return self._obs_dim
 
     @property
     def observation_space(self):
