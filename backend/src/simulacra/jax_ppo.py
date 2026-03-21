@@ -490,6 +490,14 @@ class PPOTrainer:
         self._update_step = _update_step
         self._full_update = _full_update
 
+    def _extra_log_info(self) -> tuple[dict, str]:
+        """Hook for subclasses to add extra log fields and print suffix.
+
+        Returns:
+            (extra_fields_dict, extra_print_string)
+        """
+        return {}, ""
+
     def collect_rollout(self, env_state, obs):
         """Collect a rollout of n_steps from all parallel envs.
 
@@ -773,6 +781,10 @@ class PPOTrainer:
                     "entropy": float(update_info["entropy"]),
                     "approx_kl": float(update_info["approx_kl"]),
                 }
+
+                # Hook for subclasses to add extra log fields
+                extra_fields, extra_msg = self._extra_log_info()
+                entry.update(extra_fields)
                 log_entries.append(entry)
 
                 print(
@@ -780,6 +792,7 @@ class PPOTrainer:
                     f" | ok={100*ok_rate:.0f}%"
                     f" | crash={100*crash_rate:.0f}%"
                     f" | {sps:.0f} sps"
+                    f"{extra_msg}"
                 )
 
             # ── Checkpointing ──
