@@ -321,7 +321,7 @@ class PPOTrainer:
         self.config = config
         self.rng = jax.random.PRNGKey(seed)
 
-        obs_dim = env._obs_dim  # 19
+        obs_dim = env._obs_dim  # 28 (22 base + 6 safety)
         action_dim = 3
 
         # Initialize network
@@ -658,6 +658,8 @@ class PPOTrainer:
         log_entries: Optional[list] = None,
         stage_name: str = "",
         shutdown_flag: Optional[list] = None,
+        lr_start: Optional[float] = None,
+        lr_end: Optional[float] = None,
     ):
         """Main training loop.
 
@@ -670,6 +672,8 @@ class PPOTrainer:
             log_entries: list to append log dicts to (for persistence).
             stage_name: name for logging.
             shutdown_flag: list[bool] — set [True] to request graceful stop.
+            lr_start: initial learning rate for cosine schedule (None = constant).
+            lr_end: final learning rate for cosine schedule.
         """
         config = self.config
         n_envs = self.env.num_envs
@@ -679,6 +683,30 @@ class PPOTrainer:
             shutdown_flag = [False]
         if log_entries is None:
             log_entries = []
+
+        # LR schedule — rebuild optimizer with cosine decay
+        if lr_start is not None and lr_end is not None:
+            n_updates = max(1, total_steps // steps_per_rollout)
+            # Each PPO update does n_epochs passes, but optax counts apply_gradients calls.
+            # PPO does n_epochs * n_minibatches gradient steps per update.
+            n_minibatches = max(1, (config.n_steps * n_envs) // config.batch_size)
+            total_grad_steps = n_updates * config.n_epochs * n_minibatches
+            lr_schedule = optax.cosine_decay_schedule(
+                init_value=lr_start,
+                decay_steps=total_grad_steps,
+                alpha=lr_end / lr_start,  # alpha = end/start ratio
+            )
+            self.optimizer = optax.chain(
+                optax.clip_by_global_norm(config.max_grad_norm),
+                optax.adam(lr_schedule),
+            )
+            self.train_state = TrainState.create(
+                apply_fn=self.network.apply,
+                params=self.train_state.params,
+                tx=self.optimizer,
+            )
+            self._compile()
+            print(f"  LR schedule: {lr_start} → {lr_end} (cosine over {total_grad_steps:,} grad steps)")
 
         # Initialize env
         self.rng, reset_key = jax.random.split(self.rng)

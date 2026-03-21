@@ -10,10 +10,13 @@ Architecture:
            └─ hopper_physics_step  ← jit + vmap
                 └─ jax_kernel.py physics primitives (actuators, mass, quat, etc.)
 
-Observation (19-dim, matches NumPy HopperTrackingEnv):
+Observation (28-dim):
     [x, y, z, vx, vy, vz, qw, qx, qy, qz, wx, wy, wz,   # base state (13)
      dx, dy, dz,                                            # goal-relative (3)
-     dist_to_wp, vel_toward, brake_margin_wp]               # features (3)
+     dist_to_wp, vel_toward, brake_margin_wp,               # features (3)
+     is_track, is_land, is_liftoff,                         # flight mode (3)
+     throttle_sat, gimbal_outer_sat, gimbal_inner_sat,      # actuator feedback (3)
+     speed_ratio, tilt_margin, descent_ratio]               # state envelope (3)
 
 Action (3-dim): [throttle, gimbal_outer, gimbal_inner]
     Designed to be used with guidance wrapper (PD inner loop).
@@ -357,6 +360,14 @@ def hopper_physics_step(state, action, params, rng_key):
         params["max_thrust"], params["max_thrust_rate"], params["min_thrust"], dt,
     )
 
+    # ── Actuator saturation (mirrors Phenomena actuator.saturation_ratio) ──
+    max_thrust_delta = params["max_thrust_rate"] * dt
+    throttle_sat = (throttle_cmd - actual_thrust) / jnp.maximum(max_thrust_delta, 1e-6)
+
+    max_gimbal_delta = params["gimbal_rate"] * dt
+    gimbal_outer_sat = (gimbal_outer_cmd - gimbal_outer) / jnp.maximum(max_gimbal_delta, 1e-6)
+    gimbal_inner_sat = (gimbal_inner_cmd - gimbal_inner) / jnp.maximum(max_gimbal_delta, 1e-6)
+
     # ── Fuel burn ──
     is_thrusting = actual_thrust > 0.0
     fuel_burned = jnp.where(
@@ -383,7 +394,8 @@ def hopper_physics_step(state, action, params, rng_key):
     # ── Translational dynamics (world frame) ──
     thrust_world = quat_rotate(quat, thrust_body)
     gravity_force = jnp.array([0.0, params["gravity"] * total_mass, 0.0])
-    wind_force = params["wind"]
+    # Per-episode wind (randomized at reset)
+    wind_force = state["wind"]
 
     # Drag
     speed = jnp.linalg.norm(vel)
@@ -445,12 +457,12 @@ def hopper_physics_step(state, action, params, rng_key):
     vel_new = jnp.where(touching, jnp.zeros(3), vel_new)
     omega_new = jnp.where(touching, jnp.zeros(3), omega_new)
 
-    # ── Observation (19-dim with sensor noise) ──
+    # ── Observation (22-dim with sensor noise + flight mode) ──
     k1, k2, k3, k4 = jax.random.split(rng_key, 4)
-    gps_noise = params["gps_noise_std"] * jax.random.normal(k1, (2,))
-    baro_noise = params["baro_noise_std"] * jax.random.normal(k2, (1,))
-    vel_noise = params["vel_noise_std"] * jax.random.normal(k3, (3,))
-    gyro_noise = params["gyro_noise_std"] * jax.random.normal(k4, (3,))
+    gps_noise = state["gps_noise_std"] * jax.random.normal(k1, (2,))
+    baro_noise = state["baro_noise_std"] * jax.random.normal(k2, (1,))
+    vel_noise = state["vel_noise_std"] * jax.random.normal(k3, (3,))
+    gyro_noise = state["gyro_noise_std"] * jax.random.normal(k4, (3,))
 
     obs_pos = jnp.array([
         pos_new[0] + gps_noise[0],
@@ -468,6 +480,52 @@ def hopper_physics_step(state, action, params, rng_key):
     obs_speed = jnp.linalg.norm(obs_vel)
     brake_margin = dist - obs_speed ** 2 / (2.0 * A_MAX)
 
+    # Flight mode (one-hot, 3 values):
+    #   TRACK  [1,0,0] — aerial waypoint navigation
+    #   LAND   [0,1,0] — target near ground (y < 1)
+    #   LIFTOFF [0,0,1] — on ground with aerial target
+    is_land = target[1] < 1.0
+    is_liftoff = touching & (target[1] >= 1.0)
+    is_track = ~is_land & ~is_liftoff
+    mode_onehot = jnp.array([
+        jnp.float32(is_track),
+        jnp.float32(is_land),
+        jnp.float32(is_liftoff),
+    ])
+
+    # ── Pre-compute values shared by obs and reward ──
+    true_speed = jnp.linalg.norm(vel_new)
+    omega_mag = jnp.linalg.norm(omega_new)
+    v_safe = jnp.sqrt(2.0 * MAX_DECEL * jnp.maximum(0.1, dist))
+    v_safe_vert = jnp.sqrt(2.0 * A_MAX * jnp.maximum(pos_new[1], 0.1))
+
+    # ── Safety envelope signals (6 dims) ──
+    # Actuator feedback (clipped to ±3)
+    obs_throttle_sat = jnp.clip(throttle_sat, -3.0, 3.0)
+    obs_gimbal_outer_sat = jnp.clip(gimbal_outer_sat, -3.0, 3.0)
+    obs_gimbal_inner_sat = jnp.clip(gimbal_inner_sat, -3.0, 3.0)
+
+    # Speed envelope: speed / v_safe
+    speed_ratio = jnp.clip(true_speed / jnp.maximum(v_safe, 0.1), 0.0, 3.0)
+
+    # Tilt margin: 1 = upright, 0 = at limit
+    tilt_margin = jnp.clip(1.0 - tilt_angle / params["max_tilt"], 0.0, 1.0)
+
+    # Descent rate: -vy / v_safe_vertical
+    descent_ratio = jnp.clip(
+        jnp.maximum(0.0, -vel_new[1]) / jnp.maximum(v_safe_vert, 0.1),
+        0.0, 3.0,
+    )
+
+    safety_signals = jnp.array([
+        obs_throttle_sat,
+        obs_gimbal_outer_sat,
+        obs_gimbal_inner_sat,
+        speed_ratio,
+        tilt_margin,
+        descent_ratio,
+    ])
+
     obs = jnp.concatenate([
         obs_pos,                          # 3: x, y, z
         obs_vel,                          # 3: vx, vy, vz
@@ -475,11 +533,11 @@ def hopper_physics_step(state, action, params, rng_key):
         obs_omega,                        # 3: wx, wy, wz
         goal_rel,                         # 3: dx, dy, dz
         jnp.array([dist, vel_toward, brake_margin]),  # 3: features
+        mode_onehot,                      # 3: flight mode [track, land, liftoff]
+        safety_signals,                   # 6: safety envelope
     ])
 
-    # ── Reward R8 (7 unified terms, stronger smoothness) ──
-    true_speed = jnp.linalg.norm(vel_new)
-    omega_mag = jnp.linalg.norm(omega_new)
+    # ── Reward R8 (7 unified terms, stronger smoothness) + safety penalty ──
     throttle_norm = action[0]
     fuel_frac = fuel_mass / jnp.maximum(params["fuel_capacity"], 1e-6)
     prev_dist = state["prev_dist"]
@@ -495,15 +553,14 @@ def hopper_physics_step(state, action, params, rng_key):
     r_approach = 0.15 * (prev_dist - dist)
 
     # 2. Braking profile (unchanged)
-    v_safe = jnp.sqrt(2.0 * MAX_DECEL * jnp.maximum(0.1, dist))
     excess = jnp.maximum(0.0, true_speed - v_safe)
     r_brake = -0.3 * excess ** 2
 
     # 3. Hover quality (unchanged)
     r_hover = jnp.where(dist < 3.0, 0.15 * jnp.maximum(0.0, 1.0 - true_speed / 1.5), 0.0)
 
-    # 4. Uprightness (strengthened: 0.05 → 0.08)
-    r_tilt = -0.08 * tilt_angle ** 2
+    # 4. Uprightness (parameterised — default 0.20, was 0.08 in v8)
+    r_tilt = -params["tilt_penalty"] * tilt_angle ** 2
 
     # 5. Smoothness (all penalties 2-3x stronger)
     r_smooth = smooth_w * (
@@ -522,7 +579,19 @@ def hopper_physics_step(state, action, params, rng_key):
     # 7. Fuel efficiency (NEW — tiny dense penalty for running engine)
     r_fuel = -0.001 * throttle_norm
 
-    dense_reward = r_approach + r_brake + r_hover + r_tilt + r_smooth + r_gimbal + r_fuel
+    # 8. Safety envelope penalty (actuator saturation + descent rate excess)
+    # Clip saturation before squaring — raw ratio can be huge during ramp-up
+    throttle_sat_c = jnp.clip(throttle_sat, -3.0, 3.0)
+    gimbal_outer_sat_c = jnp.clip(gimbal_outer_sat, -3.0, 3.0)
+    gimbal_inner_sat_c = jnp.clip(gimbal_inner_sat, -3.0, 3.0)
+    descent_excess = jnp.maximum(0.0, jnp.maximum(0.0, -vel_new[1]) - v_safe_vert)
+    r_safety = (
+        -0.02 * throttle_sat_c ** 2
+        - 0.01 * (gimbal_outer_sat_c ** 2 + gimbal_inner_sat_c ** 2)
+        - 0.1 * descent_excess ** 2
+    )
+
+    dense_reward = r_approach + r_brake + r_hover + r_tilt + r_smooth + r_gimbal + r_fuel + r_safety
 
     # ── Termination ──
     step_count = state["step_count"] + 1
@@ -542,7 +611,10 @@ def hopper_physics_step(state, action, params, rng_key):
     landed_crash = is_landing_wp & just_landed & (crashed_impact | tipped)
 
     # Crash: ground contact when target is in air (after grace period for liftoff)
-    air_target_ground_crash = is_aerial_wp & touching & (pos_new[1] <= 0.01) & (step_count > 5)
+    # Grace period must exceed thrust ramp time: at max_thrust_rate=4000 N/s,
+    # reaching hover thrust (1373N for 140kg) takes ~18 steps (0.36s).
+    # Use 50 steps to allow for orientation settling.
+    air_target_ground_crash = is_aerial_wp & touching & (pos_new[1] <= 0.01) & (step_count > 50)
 
     # Kinematic early termination (RAJS/Jiang 2024)
     brake_dist = true_speed ** 2 / (2.0 * A_MAX)
@@ -589,6 +661,16 @@ def hopper_physics_step(state, action, params, rng_key):
         "prev_gimbal_outer": gimbal_outer,
         "prev_gimbal_inner": gimbal_inner,
         "scenario_id": state["scenario_id"],
+        # Commanded values (for saturation recomputation in _state_to_obs)
+        "cmd_thrust": throttle_cmd,
+        "cmd_gimbal_outer": gimbal_outer_cmd,
+        "cmd_gimbal_inner": gimbal_inner_cmd,
+        # Carry forward per-episode DR values
+        "wind": state["wind"],
+        "gps_noise_std": state["gps_noise_std"],
+        "baro_noise_std": state["baro_noise_std"],
+        "vel_noise_std": state["vel_noise_std"],
+        "gyro_noise_std": state["gyro_noise_std"],
     }
 
     info = {
@@ -620,6 +702,11 @@ def make_hopper_initial_state(
     fuel_fraction=1.0,
     fuel_capacity=80.0,
     scenario_id=0,
+    wind=None,
+    gps_noise_std=0.0,
+    baro_noise_std=0.0,
+    vel_noise_std=0.0,
+    gyro_noise_std=0.0,
 ):
     """Create an initial hopper state dict from scenario outputs."""
     # Orientation: upright with small random tilt
@@ -629,6 +716,9 @@ def make_hopper_initial_state(
     quat = quat_normalize(quat_multiply(quat_multiply(tilt_rotvec_z, tilt_rotvec_y), base_quat))
 
     dist = jnp.linalg.norm(target - start_pos)
+
+    if wind is None:
+        wind = jnp.zeros(3)
 
     return {
         "pos": start_pos,
@@ -648,6 +738,16 @@ def make_hopper_initial_state(
         "prev_gimbal_outer": 0.0,
         "prev_gimbal_inner": 0.0,
         "scenario_id": jnp.int32(scenario_id),
+        # Commanded values (for saturation recomputation)
+        "cmd_thrust": 0.0,
+        "cmd_gimbal_outer": 0.0,
+        "cmd_gimbal_inner": 0.0,
+        # Domain randomization (per-episode)
+        "wind": wind,
+        "gps_noise_std": jnp.float32(gps_noise_std),
+        "baro_noise_std": jnp.float32(baro_noise_std),
+        "vel_noise_std": jnp.float32(vel_noise_std),
+        "gyro_noise_std": jnp.float32(gyro_noise_std),
     }
 
 
@@ -701,6 +801,14 @@ def hopper_default_params(
     init_fuel_hi=1.0,
     # Smoothness curriculum weight (ramps during training)
     smoothness_weight=1.0,
+    # Tilt penalty coefficient
+    tilt_penalty=0.20,
+    # Domain randomization ranges (0 = disabled)
+    dr_wind_max=0.0,         # max wind magnitude (N) per axis
+    dr_gps_noise_max=0.0,    # max GPS noise std (m)
+    dr_baro_noise_max=0.0,   # max baro noise std (m)
+    dr_vel_noise_max=0.0,    # max velocity noise std (m/s)
+    dr_gyro_noise_max=0.0,   # max gyro noise std (rad/s)
 ):
     """Create parameter dict for hopper environment."""
     return {
@@ -742,6 +850,12 @@ def hopper_default_params(
         "init_fuel_lo": init_fuel_lo,
         "init_fuel_hi": init_fuel_hi,
         "smoothness_weight": smoothness_weight,
+        "tilt_penalty": tilt_penalty,
+        "dr_wind_max": dr_wind_max,
+        "dr_gps_noise_max": dr_gps_noise_max,
+        "dr_baro_noise_max": dr_baro_noise_max,
+        "dr_vel_noise_max": dr_vel_noise_max,
+        "dr_gyro_noise_max": dr_gyro_noise_max,
     }
 
 
@@ -821,8 +935,8 @@ class JaxHopperVecEnv:
         # PRNG
         self.rng = jax.random.PRNGKey(seed)
 
-        # Observation space: 19-dim
-        self._obs_dim = 19
+        # Observation space: 28-dim (22 base + 6 safety envelope)
+        self._obs_dim = 28
         vel_bound = max(50.0, math.sqrt(2 * 9.81 * max_altitude) * 1.2)
         alt_bound = max(150.0, max_altitude * 1.2)
         dist_bound = 200.0
@@ -834,6 +948,9 @@ class JaxHopperVecEnv:
             -10, -10, -10,                             # angular velocity
             -dist_bound, -dist_bound, -dist_bound,     # goal relative
             0.0, -vel_bound, -dist_bound,              # features
+            0, 0, 0,                                   # mode one-hot
+            -3, -3, -3,                                # actuator saturation
+            0, 0, 0,                                   # state envelope
         ], dtype=np.float32)
 
         self.obs_high = np.array([
@@ -843,6 +960,9 @@ class JaxHopperVecEnv:
             10, 10, 10,
             dist_bound, dist_bound, dist_bound,
             dist_bound, vel_bound, dist_bound,
+            1, 1, 1,                                   # mode one-hot
+            3, 3, 3,                                   # actuator saturation
+            3, 1, 3,                                   # state envelope
         ], dtype=np.float32)
 
         # State
@@ -882,7 +1002,7 @@ class JaxHopperVecEnv:
         ))
 
         def _reset_single(rng_key):
-            k1, k2, k3, k4 = jax.random.split(rng_key, 4)
+            k1, k2, k3, k4, k5, k6 = jax.random.split(rng_key, 6)
 
             # Sample scenario type
             scenario_idx = jax.random.choice(k1, len(scenario_ids), p=scenario_weights)
@@ -902,10 +1022,21 @@ class JaxHopperVecEnv:
             )
 
             # Random fuel fraction
-            k5 = jax.random.fold_in(k4, 1)
             fuel_frac = jax.random.uniform(
                 k5, minval=params["init_fuel_lo"], maxval=params["init_fuel_hi"],
             )
+
+            # Domain randomization: per-episode wind and sensor noise
+            k_dr1, k_dr2, k_dr3, k_dr4, k_dr5 = jax.random.split(k6, 5)
+            wind_max = params["dr_wind_max"]
+            wind = wind_max * jax.random.uniform(k_dr1, (3,), minval=-1.0, maxval=1.0)
+            # Zero out Y component (wind is horizontal only)
+            wind = wind.at[1].set(0.0)
+
+            gps_noise_std = params["dr_gps_noise_max"] * jax.random.uniform(k_dr2)
+            baro_noise_std = params["dr_baro_noise_max"] * jax.random.uniform(k_dr3)
+            vel_noise_std = params["dr_vel_noise_max"] * jax.random.uniform(k_dr4)
+            gyro_noise_std = params["dr_gyro_noise_max"] * jax.random.uniform(k_dr5)
 
             return make_hopper_initial_state(
                 start_pos=start_pos,
@@ -917,30 +1048,91 @@ class JaxHopperVecEnv:
                 fuel_fraction=fuel_frac,
                 fuel_capacity=params["fuel_capacity"],
                 scenario_id=scenario_id,
+                wind=wind,
+                gps_noise_std=gps_noise_std,
+                baro_noise_std=baro_noise_std,
+                vel_noise_std=vel_noise_std,
+                gyro_noise_std=gyro_noise_std,
             )
 
         self._reset_fn = jax.jit(jax.vmap(_reset_single))
 
+        # Pre-compute static params for obs function
+        _dt = params["dt"]
+        _max_thrust_delta = params["max_thrust_rate"] * _dt
+        _max_gimbal_delta = params["gimbal_rate"] * _dt
+        _max_tilt = params["max_tilt"]
+
+        @jax.jit
+        def _state_to_obs_batched(state):
+            """Extract 28-dim observation from batched state."""
+            pos = state["pos"]      # (N, 3)
+            vel = state["vel"]      # (N, 3)
+            quat = state["quat"]    # (N, 4)
+            omega = state["omega"]  # (N, 3)
+            target = state["target"]  # (N, 3)
+            on_ground = state["on_ground"]  # (N,)
+
+            goal_rel = target - pos
+            dist = jnp.linalg.norm(goal_rel, axis=-1, keepdims=True)
+            dir_to_wp = goal_rel / jnp.maximum(dist, 0.01)
+            vel_toward = jnp.sum(vel * dir_to_wp, axis=-1, keepdims=True)
+            speed = jnp.linalg.norm(vel, axis=-1, keepdims=True)
+            brake_margin = dist - speed ** 2 / (2.0 * A_MAX)
+
+            # Flight mode one-hot
+            is_land = (target[:, 1] < 1.0)
+            is_liftoff = on_ground & (target[:, 1] >= 1.0)
+            is_track = ~is_land & ~is_liftoff
+            mode_onehot = jnp.stack([
+                jnp.float32(is_track),
+                jnp.float32(is_land),
+                jnp.float32(is_liftoff),
+            ], axis=-1)
+
+            # Safety envelope signals (6 dims)
+            throttle_sat = (state["cmd_thrust"] - state["actual_thrust"]) / jnp.maximum(_max_thrust_delta, 1e-6)
+            gimbal_outer_sat = (state["cmd_gimbal_outer"] - state["gimbal_outer"]) / jnp.maximum(_max_gimbal_delta, 1e-6)
+            gimbal_inner_sat = (state["cmd_gimbal_inner"] - state["gimbal_inner"]) / jnp.maximum(_max_gimbal_delta, 1e-6)
+
+            v_safe = jnp.sqrt(2.0 * MAX_DECEL * jnp.maximum(0.1, dist))
+            speed_ratio = jnp.clip(speed / jnp.maximum(v_safe, 0.1), 0.0, 3.0)
+
+            # Tilt: vectorized quaternion rotation (no nested vmap)
+            # R[1,0] = 2(xy + wz) = Y component of body X-axis in world frame
+            qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+            cos_tilt = jnp.clip(2.0 * (qx * qy + qw * qz), -1.0, 1.0)
+            tilt_angle = jnp.arccos(cos_tilt)
+            tilt_margin = jnp.clip(1.0 - tilt_angle / _max_tilt, 0.0, 1.0)
+
+            v_safe_vert = jnp.sqrt(2.0 * A_MAX * jnp.maximum(pos[:, 1], 0.1))
+            descent_ratio = jnp.clip(
+                jnp.maximum(0.0, -vel[:, 1]) / jnp.maximum(v_safe_vert, 0.1),
+                0.0, 3.0,
+            )
+
+            safety = jnp.stack([
+                jnp.clip(throttle_sat, -3.0, 3.0),
+                jnp.clip(gimbal_outer_sat, -3.0, 3.0),
+                jnp.clip(gimbal_inner_sat, -3.0, 3.0),
+                speed_ratio.squeeze(-1),
+                tilt_margin,
+                descent_ratio,
+            ], axis=-1)
+
+            return jnp.concatenate([
+                pos, vel, quat, omega,
+                goal_rel,
+                dist, vel_toward, brake_margin,
+                mode_onehot,
+                safety,
+            ], axis=-1)
+
+        self._state_to_obs_jit = _state_to_obs_batched
+
     def _state_to_obs(self, state):
-        """Extract 19-dim observation from batched state."""
-        pos = state["pos"]      # (N, 3)
-        vel = state["vel"]      # (N, 3)
-        quat = state["quat"]    # (N, 4)
-        omega = state["omega"]  # (N, 3)
-        target = state["target"]  # (N, 3)
-
-        goal_rel = target - pos
-        dist = jnp.linalg.norm(goal_rel, axis=-1, keepdims=True)  # (N, 1)
-        dir_to_wp = goal_rel / jnp.maximum(dist, 0.01)
-        vel_toward = jnp.sum(vel * dir_to_wp, axis=-1, keepdims=True)  # (N, 1)
-        speed = jnp.linalg.norm(vel, axis=-1, keepdims=True)  # (N, 1)
-        brake_margin = dist - speed ** 2 / (2.0 * A_MAX)
-
-        return jnp.concatenate([
-            pos, vel, quat, omega,
-            goal_rel,
-            dist, vel_toward, brake_margin,
-        ], axis=-1)
+        """Extract 28-dim observation from batched state (JIT-compiled)."""
+        return self._state_to_obs_jit(state)
 
     def reset(self, seed: Optional[int] = None):
         """Reset all environments. Returns obs (num_envs, 19) as NumPy."""
