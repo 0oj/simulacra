@@ -380,31 +380,31 @@ def extreme_wind_scenario():
 
 def descent_vertical_scenario():
     """Vertical descent from 20m, slight downward velocity."""
-    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=1.0,
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=8.0,
                     acceptance_radius=0.5)]
     return "descent_vert", wps, {"start_pos": (0, 20, 0), "start_vel": (0, -1, 0)}
 
 def descent_diagonal_scenario():
     """Diagonal descent from 25m altitude with 10m lateral offset."""
-    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=1.0,
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=8.0,
                     acceptance_radius=0.5)]
     return "descent_diag", wps, {"start_pos": (8, 25, -5), "start_vel": (-0.5, -2, 0.3)}
 
 def descent_fast_scenario():
     """Fast descent from 40m with high downward velocity."""
-    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=1.5,
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=10.0,
                     acceptance_radius=0.5)]
     return "descent_fast", wps, {"start_pos": (3, 40, -2), "start_vel": (0, -5, 0)}
 
 def descent_low_scenario():
     """Low altitude precision landing from 5m."""
-    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=0.5,
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=5.0,
                     acceptance_radius=0.3)]
     return "descent_low", wps, {"start_pos": (1, 5, -1), "start_vel": (0.2, -0.5, 0.1)}
 
 def descent_wind_scenario():
     """Descent from 20m with crosswind."""
-    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=1.0,
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=8.0,
                     acceptance_radius=0.5)]
     return "descent_wind", wps, {"start_pos": (0, 20, 0), "start_vel": (0, -1, 0),
                                   "wind_x": 4.0, "wind_z": 2.0}
