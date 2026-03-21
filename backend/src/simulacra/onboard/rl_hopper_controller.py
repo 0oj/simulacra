@@ -5,8 +5,9 @@ Loads a trained SB3 PPO model and runs it through the same sensor/actuator inter
 as HopperController. Waypoint sequencing (hold timers, acceptance radius, advancement)
 is handled identically to the PID version.
 
-The policy expects 19-dim observations [state_13 + goal_rel_3 + features_3] and outputs
-3-dim actions [throttle, tilt_x, tilt_z]. An inner PD controller (same as GuidanceWrapper)
+The policy expects 22-dim (or 28-dim with safety envelope) observations
+[state_13 + goal_rel_3 + features_3 + mode_3 + (safety_6)]
+and outputs 3-dim actions [throttle, tilt_x, tilt_z]. An inner PD controller (same as GuidanceWrapper)
 converts tilt commands to gimbal angles.
 
 Usage:
@@ -34,6 +35,7 @@ from ..phenomena.actuators import (
 from ..phenomena.sensors import Sensors
 from .controller import Controller
 from .hopper_controller import Waypoint, HopperConfig
+from .safety_envelope import SafetyEnvelope
 
 
 class RLHopperController(Controller):
@@ -62,10 +64,12 @@ class RLHopperController(Controller):
         config: Optional[HopperConfig] = None,
         deterministic: bool = True,
         max_tilt: float = 0.15,
+        safety_envelope: Optional[SafetyEnvelope] = None,
     ):
         self.throttle = throttle
         self.gimbal = gimbal
         self.waypoints = waypoints
+        self.safety_envelope = safety_envelope
         self.config = config or HopperConfig()
         self.deterministic = deterministic
         self.max_tilt = max_tilt
@@ -163,7 +167,7 @@ class RLHopperController(Controller):
             self._wp_idx = len(self.waypoints)
             return
 
-        # ── Build observation (19-dim) ──
+        # ── Build observation (22-dim) ──
         # Base state: [x, y, z, vx, vy, vz, qw, qx, qy, qz, wx, wy, wz]
         state = np.array([
             gps.x, alt, gps.z,
@@ -190,7 +194,30 @@ class RLHopperController(Controller):
 
         features = np.array([dist_to_wp, vel_toward, brake_margin], dtype=np.float32)
 
-        obs = np.concatenate([state, goal_rel, features])
+        # Flight mode one-hot: [TRACK, LAND, LIFTOFF]
+        is_land = target[1] < 1.0
+        on_ground = alt < 0.5 and speed < 0.5
+        is_liftoff = on_ground and not is_land
+        is_track = not is_land and not is_liftoff
+        mode = np.array([float(is_track), float(is_land), float(is_liftoff)], dtype=np.float32)
+
+        obs = np.concatenate([state, goal_rel, features, mode])
+
+        # ── Safety envelope (if attached) ──
+        if self.safety_envelope is not None:
+            a_max_env = max(cfg.max_thrust / total_mass - g, 1.0)
+            v_safe = math.sqrt(2 * a_max_env * max(0.1, dist_to_wp))
+
+            # Tilt from quaternion: R[1,0] = 2*(qx*qy + qw*qz)
+            nose_y = 2 * (quat[1] * quat[2] + quat[0] * quat[3])
+            tilt = math.acos(max(-1.0, min(1.0, nose_y)))
+
+            self.safety_envelope.update_state(
+                speed=speed, v_safe=v_safe, tilt=tilt,
+                max_tilt=1.0, vy=float(vel.y), alt=alt,
+            )
+            safety_signals = self.safety_envelope.read()
+            obs = np.concatenate([obs, safety_signals])
 
         # ── Run policy ──
         if self._jax_params is not None:
