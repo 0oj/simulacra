@@ -37,12 +37,21 @@ from simulacra.onboard.hopper_controller import (
 from simulacra.schema import DebugMessage, write_message
 
 
-def make_sim(gravity=9.81, mass_scale=1.0, wind_x=0.0, wind_z=0.0):
-    """Create simulation components."""
+def make_sim(gravity=9.81, mass_scale=1.0, wind_x=0.0, wind_z=0.0,
+             start_pos=None, start_vel=None):
+    """Create simulation components.
+
+    Args:
+        start_pos: Initial position [x, y, z] (default: [0, 0, 0]).
+        start_vel: Initial velocity [vx, vy, vz] (default: [0, 0, 0]).
+    """
     dry_mass = 60.0 * mass_scale
     fuel_mass = 80.0 * mass_scale
     length = 4.0
     max_thrust = 2000.0
+
+    px, py, pz = start_pos if start_pos is not None else (0.0, 0.0, 0.0)
+    vx, vy, vz = start_vel if start_vel is not None else (0.0, 0.0, 0.0)
 
     mass_model = MassModel(components=[
         MassComponent("dry", dry_mass, RocketVec3(length / 2, 0, 0)),
@@ -55,8 +64,8 @@ def make_sim(gravity=9.81, mass_scale=1.0, wind_x=0.0, wind_z=0.0):
         thrust_application_offset=RocketVec3(0, 0, 0),
     )
     state = RocketState(
-        position=WorldVec3(0.0, 0.0, 0.0),
-        velocity=WorldVec3(0.0, 0.0, 0.0),
+        position=WorldVec3(px, py, pz),
+        velocity=WorldVec3(vx, vy, vz),
         orientation=get_upright_orientation(),
         angular_velocity_body=RocketVec3(0.0, 0.0, 0.0),
         thrust_body=RocketVec3(0.0, 0.0, 0.0),
@@ -87,11 +96,13 @@ def make_sim(gravity=9.81, mass_scale=1.0, wind_x=0.0, wind_z=0.0):
 
 def run_flight(controller_type, waypoints, model_path=None, max_tilt=0.15,
                gravity=9.81, mass_scale=1.0, wind_x=0.0, wind_z=0.0,
+               start_pos=None, start_vel=None,
                max_duration=200.0, save_ndjson=None):
     """Run a flight with either PID or RL controller and return metrics."""
     kernel, actuators, sensors, config = make_sim(
         gravity=gravity, mass_scale=mass_scale,
         wind_x=wind_x, wind_z=wind_z,
+        start_pos=start_pos, start_vel=start_vel,
     )
 
     if controller_type == "pid":
@@ -108,6 +119,15 @@ def run_flight(controller_type, waypoints, model_path=None, max_tilt=0.15,
             gimbal=actuators._gimbal,
             waypoints=waypoints,
             model_path=model_path,
+            config=config,
+            max_tilt=max_tilt,
+        )
+    elif controller_type == "gfold":
+        from simulacra.onboard.gfold_controller import GFOLDHopperController
+        controller = GFOLDHopperController(
+            throttle=actuators._throttle,
+            gimbal=actuators._gimbal,
+            waypoints=waypoints,
             config=config,
             max_tilt=max_tilt,
         )
@@ -224,8 +244,8 @@ def run_flight(controller_type, waypoints, model_path=None, max_tilt=0.15,
         ndjson_file.close()
 
     return {
-        "completed": landed and not crashed,
-        "crashed": crashed,
+        "completed": bool(landed and not crashed),
+        "crashed": bool(crashed),
         "time_s": round(t, 1),
         "fuel_remaining": round(fuel_remaining, 3),
         "fuel_used_pct": round((1.0 - fuel_remaining) * 100, 1),
@@ -320,7 +340,78 @@ def wind_scenario():
     ]
     return "wind_5ms", wps, {"wind_x": 5.0}
 
-ALL_SCENARIOS = [
+def wind_landing_scenario():
+    """High approach landing with crosswind."""
+    wps = [
+        Waypoint(np.array([0., 40., 0.]), hold_time=2.0, max_speed=5.0,
+                 acceptance_radius=1.0),
+        Waypoint(np.array([0., 0.0, 0.]), hold_time=60.0, max_speed=1.0,
+                 acceptance_radius=0.5),
+    ]
+    return "wind_landing", wps, {"wind_x": 4.0, "wind_z": 2.0}
+
+def wind_lateral_scenario():
+    """Lateral move + landing in crosswind."""
+    wps = [
+        Waypoint(np.array([0., 20., 0.]), hold_time=2.0, max_speed=4.0,
+                 acceptance_radius=1.0),
+        Waypoint(np.array([15., 20., 0.]), hold_time=2.0, max_speed=4.0,
+                 acceptance_radius=1.0),
+        Waypoint(np.array([15., 0.0, 0.]), hold_time=60.0, max_speed=1.0,
+                 acceptance_radius=0.5),
+    ]
+    return "wind_lateral", wps, {"wind_x": 3.0, "wind_z": 3.0}
+
+def extreme_wind_scenario():
+    """Vertical + landing in 500N crosswind (3.6 m/s² lateral accel on 140kg rocket)."""
+    wps = [
+        Waypoint(np.array([0., 20., 0.]), hold_time=3.0, max_speed=4.0,
+                 acceptance_radius=1.5),
+        Waypoint(np.array([0., 0.0, 0.]), hold_time=60.0, max_speed=1.0,
+                 acceptance_radius=0.5),
+    ]
+    # Environment.wind is added directly as force (N) to net_force
+    return "extreme_wind_500N", wps, {"wind_x": 500.0}
+
+# ──────────────────────────────────────────────────────────────
+# Descent scenarios (start in air, land at origin)
+# These are the proper test cases for G-FOLD comparison.
+# ──────────────────────────────────────────────────────────────
+
+def descent_vertical_scenario():
+    """Vertical descent from 20m, slight downward velocity."""
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=1.0,
+                    acceptance_radius=0.5)]
+    return "descent_vert", wps, {"start_pos": (0, 20, 0), "start_vel": (0, -1, 0)}
+
+def descent_diagonal_scenario():
+    """Diagonal descent from 25m altitude with 10m lateral offset."""
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=1.0,
+                    acceptance_radius=0.5)]
+    return "descent_diag", wps, {"start_pos": (8, 25, -5), "start_vel": (-0.5, -2, 0.3)}
+
+def descent_fast_scenario():
+    """Fast descent from 40m with high downward velocity."""
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=1.5,
+                    acceptance_radius=0.5)]
+    return "descent_fast", wps, {"start_pos": (3, 40, -2), "start_vel": (0, -5, 0)}
+
+def descent_low_scenario():
+    """Low altitude precision landing from 5m."""
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=0.5,
+                    acceptance_radius=0.3)]
+    return "descent_low", wps, {"start_pos": (1, 5, -1), "start_vel": (0.2, -0.5, 0.1)}
+
+def descent_wind_scenario():
+    """Descent from 20m with crosswind."""
+    wps = [Waypoint(np.array([0., 0., 0.]), hold_time=60.0, max_speed=1.0,
+                    acceptance_radius=0.5)]
+    return "descent_wind", wps, {"start_pos": (0, 20, 0), "start_vel": (0, -1, 0),
+                                  "wind_x": 4.0, "wind_z": 2.0}
+
+
+# Original waypoint-following scenarios (PID/RL only — start from ground)
+WAYPOINT_SCENARIOS = [
     standard_scenario,
     simple_vertical_scenario,
     tall_vertical_scenario,
@@ -328,7 +419,21 @@ ALL_SCENARIOS = [
     precision_land_scenario,
     fast_sequence_scenario,
     wind_scenario,
+    wind_landing_scenario,
+    wind_lateral_scenario,
+    extreme_wind_scenario,
 ]
+
+# Descent scenarios (PID, RL, and G-FOLD — start from altitude)
+DESCENT_SCENARIOS = [
+    descent_vertical_scenario,
+    descent_diagonal_scenario,
+    descent_fast_scenario,
+    descent_low_scenario,
+    descent_wind_scenario,
+]
+
+ALL_SCENARIOS = WAYPOINT_SCENARIOS + DESCENT_SCENARIOS
 
 
 # ──────────────────────────────────────────────────────────────
@@ -336,13 +441,17 @@ ALL_SCENARIOS = [
 # ──────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate PID vs RL hopper controllers")
+    parser = argparse.ArgumentParser(description="Evaluate PID vs RL vs G-FOLD hopper controllers")
     parser.add_argument("--model", type=str, default="runs/hopper_rl/final_model",
                         help="Path to trained RL model")
-    parser.add_argument("--max-tilt", type=float, default=0.15,
+    parser.add_argument("--max-tilt", type=float, default=0.25,
                         help="GuidanceWrapper max_tilt used during training")
     parser.add_argument("--pid-only", action="store_true",
                         help="Only run PID controller")
+    parser.add_argument("--descent-only", action="store_true",
+                        help="Only run descent scenarios (suitable for G-FOLD)")
+    parser.add_argument("--gfold", action="store_true",
+                        help="Include G-FOLD controller (descent scenarios only)")
     parser.add_argument("--save-ndjson", action="store_true", default=True,
                         help="Save NDJSON replay files")
     args = parser.parse_args()
@@ -360,18 +469,30 @@ def main():
         else:
             print(f"RL model not found at {args.model}, running PID only")
 
+    # Select scenarios
+    if args.descent_only:
+        scenarios = DESCENT_SCENARIOS
+    else:
+        scenarios = ALL_SCENARIOS
+
     results = []
 
     # Header
-    print(f"\n{'Scenario':<18s} {'Ctrl':<5s} {'OK':>3s} {'Time':>6s} "
+    print(f"\n{'Scenario':<18s} {'Ctrl':<6s} {'OK':>3s} {'Time':>6s} "
           f"{'Fuel%':>6s} {'Vland':>6s} {'WPs':>5s} "
           f"{'Tilt':>6s} {'ω_rms':>6s} {'ΔT_rms':>7s}")
     print("-" * 85)
 
-    for scenario_fn in ALL_SCENARIOS:
+    for scenario_fn in scenarios:
         name, waypoints, extra_kwargs = scenario_fn()
+        is_descent = scenario_fn in DESCENT_SCENARIOS
 
-        for ctrl_type in controllers:
+        # Build controller list for this scenario
+        scenario_controllers = list(controllers)
+        if args.gfold and is_descent:
+            scenario_controllers.append("gfold")
+
+        for ctrl_type in scenario_controllers:
             ndjson_path = None
             if args.save_ndjson:
                 ndjson_path = ndjson_dir / f"{name}_{ctrl_type}.ndjson"
@@ -379,7 +500,7 @@ def main():
             r = run_flight(
                 ctrl_type, waypoints,
                 model_path=args.model if ctrl_type == "rl" else None,
-                max_tilt=args.max_tilt if ctrl_type == "rl" else 0.15,
+                max_tilt=args.max_tilt if ctrl_type in ("rl", "gfold") else 0.15,
                 save_ndjson=ndjson_path,
                 **extra_kwargs,
             )
@@ -390,12 +511,12 @@ def main():
             ok = "YES" if r["completed"] else "NO"
             vl = f"{r['landing_speed_ms']:.2f}" if r["landing_speed_ms"] else "N/A"
             wp_str = f"{r['waypoints_reached']}/{r['waypoints_total']}"
-            print(f"{name:<18s} {ctrl_type:<5s} {ok:>3s} {r['time_s']:6.1f} "
+            print(f"{name:<18s} {ctrl_type:<6s} {ok:>3s} {r['time_s']:6.1f} "
                   f"{r['fuel_used_pct']:6.1f} {vl:>6s} {wp_str:>5s} "
                   f"{r['max_tilt_deg']:6.1f} {r['rms_omega']:6.3f} "
                   f"{r['rms_dthrottle']:7.1f}")
 
-        if len(controllers) > 1:
+        if len(scenario_controllers) > 1:
             print()  # blank line between scenarios when comparing
 
     # Save results
@@ -406,7 +527,8 @@ def main():
     print(f"\nResults saved to {results_file}")
 
     # Summary
-    for ctrl_type in controllers:
+    all_ctrl_types = sorted(set(r["controller"] for r in results))
+    for ctrl_type in all_ctrl_types:
         ctrl_results = [r for r in results if r["controller"] == ctrl_type]
         completed = sum(1 for r in ctrl_results if r["completed"])
         total = len(ctrl_results)
