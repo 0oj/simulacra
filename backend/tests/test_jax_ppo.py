@@ -90,10 +90,10 @@ class TestPPOConfig:
 
 class TestActorCritic:
     def test_init_param_shapes(self):
-        """Network parameters have correct shapes for 19-dim obs, 3-dim action."""
+        """Network parameters have correct shapes for 28-dim obs, 3-dim action."""
         net = ActorCritic(action_dim=3, hidden_dims=(64, 64))
         rng = jax.random.PRNGKey(0)
-        params = net.init(rng, jnp.zeros((1, 19)))["params"]
+        params = net.init(rng, jnp.zeros((1, 28)))["params"]
 
         # log_std should be (3,) — one per action dim
         assert params["log_std"].shape == (3,)
@@ -112,10 +112,10 @@ class TestActorCritic:
         """Forward pass returns correct output shapes."""
         net = ActorCritic(action_dim=3, hidden_dims=(64, 64))
         rng = jax.random.PRNGKey(0)
-        params = net.init(rng, jnp.zeros((1, 19)))
+        params = net.init(rng, jnp.zeros((1, 28)))
 
         batch_size = 4
-        obs = jnp.ones((batch_size, 19))
+        obs = jnp.ones((batch_size, 28))
         action_mean, log_std, value = net.apply(params, obs)
 
         assert action_mean.shape == (batch_size, 3)
@@ -126,9 +126,9 @@ class TestActorCritic:
         """Forward pass works with single observation (batch=1)."""
         net = ActorCritic(action_dim=3, hidden_dims=(32,))
         rng = jax.random.PRNGKey(0)
-        params = net.init(rng, jnp.zeros((1, 19)))
+        params = net.init(rng, jnp.zeros((1, 28)))
 
-        obs = jnp.ones((1, 19))
+        obs = jnp.ones((1, 28))
         action_mean, log_std, value = net.apply(params, obs)
 
         assert action_mean.shape == (1, 3)
@@ -141,8 +141,8 @@ class TestActorCritic:
         for dims in [(32,), (64, 64), (128, 64, 32)]:
             net = ActorCritic(action_dim=3, hidden_dims=dims)
             rng = jax.random.PRNGKey(0)
-            params = net.init(rng, jnp.zeros((1, 19)))
-            action_mean, log_std, value = net.apply(params, jnp.ones((2, 19)))
+            params = net.init(rng, jnp.zeros((1, 28)))
+            action_mean, log_std, value = net.apply(params, jnp.ones((2, 28)))
             assert action_mean.shape == (2, 3)
 
 
@@ -315,10 +315,10 @@ class TestPPOLoss:
         """PPO loss returns dict with all expected metric keys."""
         net = ActorCritic(action_dim=3, hidden_dims=(32,))
         rng = jax.random.PRNGKey(0)
-        params = net.init(rng, jnp.zeros((1, 19)))["params"]
+        params = net.init(rng, jnp.zeros((1, 28)))["params"]
 
         batch = RolloutBatch(
-            obs=jnp.ones((16, 19)),
+            obs=jnp.ones((16, 28)),
             actions=jnp.zeros((16, 3)),
             log_probs=jnp.zeros(16),
             advantages=jnp.ones(16),
@@ -342,10 +342,10 @@ class TestPPOLoss:
         """PPO loss should produce finite values."""
         net = ActorCritic(action_dim=3, hidden_dims=(32,))
         rng = jax.random.PRNGKey(0)
-        params = net.init(rng, jnp.zeros((1, 19)))["params"]
+        params = net.init(rng, jnp.zeros((1, 28)))["params"]
 
         batch = RolloutBatch(
-            obs=jax.random.normal(jax.random.PRNGKey(1), (16, 19)),
+            obs=jax.random.normal(jax.random.PRNGKey(1), (16, 28)),
             actions=jax.random.normal(jax.random.PRNGKey(2), (16, 3)),
             log_probs=-jnp.ones(16),
             advantages=jnp.ones(16),
@@ -366,10 +366,10 @@ class TestPPOLoss:
         """Zero advantages should give near-zero policy loss."""
         net = ActorCritic(action_dim=3, hidden_dims=(32,))
         rng = jax.random.PRNGKey(0)
-        params = net.init(rng, jnp.zeros((1, 19)))["params"]
+        params = net.init(rng, jnp.zeros((1, 28)))["params"]
 
         # Get log probs under current policy for these actions
-        obs = jnp.ones((16, 19))
+        obs = jnp.ones((16, 28))
         action_mean, log_std, _ = net.apply({"params": params}, obs)
         actions = action_mean  # use mean actions for consistency
         from simulacra.jax_ppo import gaussian_log_prob
@@ -405,15 +405,15 @@ class TestPPOTrainer:
         assert trainer.get_param_count() > 0
 
     def test_param_count(self, trainer):
-        """Param count matches expected for 256x256 network with 19-dim obs, 3-dim action.
+        """Param count matches expected for 256x256 network with 28-dim obs, 3-dim action.
 
-        Actor: 19*256 + 256 + 256*256 + 256 + 256*3 + 3 = 5120+256+65536+256+768+3 = 71939
+        Actor: 28*256 + 256 + 256*256 + 256 + 256*3 + 3 = 7168+256+65536+256+768+3 = 73987
         log_std: 3
-        Critic: 19*256 + 256 + 256*256 + 256 + 256*1 + 1 = 5120+256+65536+256+256+1 = 71425
-        Total = 71939 + 3 + 71425 = does not need to be exact but > 100K
+        Critic: 28*256 + 256 + 256*256 + 256 + 256*1 + 1 = 7168+256+65536+256+256+1 = 73473
+        Total ≈ 147K
         """
         count = trainer.get_param_count()
-        # 256x256 nets should have ~140K params
+        # 256x256 nets should have ~147K params
         assert count > 100_000
         assert count < 200_000
 
@@ -432,13 +432,13 @@ class TestPPOTrainer:
             env_state, obs,
         )
 
-        assert rollout["obs"].shape == (n_steps, n_envs, 19)
+        assert rollout["obs"].shape == (n_steps, n_envs, 28)
         assert rollout["actions"].shape == (n_steps, n_envs, 3)
         assert rollout["log_probs"].shape == (n_steps, n_envs)
         assert rollout["rewards"].shape == (n_steps, n_envs)
         assert rollout["dones"].shape == (n_steps, n_envs)
         assert rollout["values"].shape == (n_steps, n_envs)
-        assert final_obs.shape == (n_envs, 19)
+        assert final_obs.shape == (n_envs, 28)
 
     def test_update_returns_metrics(self, trainer, env, config):
         """PPO update runs and returns metrics dict."""
@@ -498,7 +498,7 @@ class TestPPOTrainer:
 
     def test_predict_deterministic(self, trainer):
         """predict() returns clipped actions in correct range."""
-        obs = np.random.randn(4, 19).astype(np.float32)
+        obs = np.random.randn(4, 28).astype(np.float32)
         actions = trainer.predict(obs, deterministic=True)
 
         assert isinstance(actions, np.ndarray)
@@ -512,7 +512,7 @@ class TestPPOTrainer:
 
     def test_predict_stochastic(self, trainer):
         """predict(deterministic=False) returns actions with noise."""
-        obs = np.ones((4, 19), dtype=np.float32)
+        obs = np.ones((4, 28), dtype=np.float32)
 
         # Stochastic predictions should differ across calls
         a1 = trainer.predict(obs, deterministic=False)
@@ -524,7 +524,7 @@ class TestPPOTrainer:
 
     def test_predict_deterministic_is_consistent(self, trainer):
         """Deterministic predictions should be the same every call."""
-        obs = np.ones((4, 19), dtype=np.float32)
+        obs = np.ones((4, 28), dtype=np.float32)
         a1 = trainer.predict(obs, deterministic=True)
         a2 = trainer.predict(obs, deterministic=True)
         np.testing.assert_allclose(a1, a2, atol=1e-6)
@@ -534,7 +534,7 @@ class TestPPOTrainer:
         # Should not raise
         trainer.set_lr(1e-5)
         # Trainer should still be functional
-        obs = np.ones((2, 19), dtype=np.float32)
+        obs = np.ones((2, 28), dtype=np.float32)
         actions = trainer.predict(obs, deterministic=True)
         assert actions.shape == (2, 3)
 
@@ -595,7 +595,7 @@ class TestCheckpoint:
             with open(save_path / "config.json") as f:
                 meta = json.load(f)
 
-            assert meta["obs_dim"] == 19
+            assert meta["obs_dim"] == 28
             assert meta["action_dim"] == 3
             assert "config" in meta
             assert meta["config"]["n_steps"] == trainer.config.n_steps
@@ -625,7 +625,7 @@ class TestIntegration:
         assert trainer.total_steps == steps
 
         # Predict
-        obs = np.random.randn(4, 19).astype(np.float32)
+        obs = np.random.randn(4, 28).astype(np.float32)
         actions = trainer.predict(obs)
         assert actions.shape == (4, 3)
 

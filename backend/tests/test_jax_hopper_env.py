@@ -52,7 +52,7 @@ def small_env():
 class TestObsSpace:
     def test_obs_shape(self, env):
         obs = env.reset()
-        assert obs.shape == (16, 19), f"Expected (16, 19), got {obs.shape}"
+        assert obs.shape == (16, 28), f"Expected (16, 28), got {obs.shape}"
 
     def test_obs_finite(self, env):
         obs = env.reset()
@@ -85,7 +85,7 @@ class TestStep:
         actions = np.random.uniform(0, 1, (16, 3)).astype(np.float32)
         actions[:, 1:] = actions[:, 1:] * 2 - 1
         obs, rewards, dones, infos = env.step(actions)
-        assert obs.shape == (16, 19)
+        assert obs.shape == (16, 28)
         assert rewards.shape == (16,)
         assert dones.shape == (16,)
         assert len(infos) == 16
@@ -176,7 +176,7 @@ class TestScenarios:
             seed=42,
         )
         obs = env.reset()
-        assert obs.shape == (32, 19)
+        assert obs.shape == (32, 28)
         assert np.all(np.isfinite(obs))
 
 
@@ -306,5 +306,5 @@ class TestInfo:
             for i in range(4):
                 if dones[i]:
                     assert "terminal_observation" in infos[i]
-                    assert infos[i]["terminal_observation"].shape == (19,)
+                    assert infos[i]["terminal_observation"].shape == (28,)
                     return
