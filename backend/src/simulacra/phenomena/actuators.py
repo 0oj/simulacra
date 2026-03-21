@@ -61,6 +61,7 @@ class ThrottleActuator:
         # Internal state
         self._commanded_thrust: float = 0.0
         self._actual_thrust: float = self._rocket.state.thrust_body.norm
+        self._dt: float = 0.02  # last step dt, updated in step()
         # Nominal direction (set by gimbal or default to +X)
         self._nominal_direction: np.ndarray = np.array([1.0, 0.0, 0.0])
 
@@ -81,6 +82,7 @@ class ThrottleActuator:
         Updates actual thrust toward commanded, respecting rate limit.
         Then applies to the rocket state.
         """
+        self._dt = dt
         # Rate limit
         max_delta = self.max_thrust_rate * dt
         delta = self._commanded_thrust - self._actual_thrust
@@ -95,6 +97,19 @@ class ThrottleActuator:
 
         # Apply to rocket
         self._update_rocket_thrust()
+
+    @property
+    def saturation_ratio(self) -> float:
+        """Normalized command-vs-actual error. 0 = honored, ±1 = fully clamped."""
+        max_delta = self.max_thrust_rate * self._dt
+        if max_delta < 1e-6:
+            return 0.0
+        return (self._commanded_thrust - self._actual_thrust) / max_delta
+
+    @property
+    def actual_thrust(self) -> float:
+        """Current actual thrust magnitude (Newtons)."""
+        return self._actual_thrust
 
     def set_nominal_direction(self, direction: np.ndarray) -> None:
         """Set the nominal thrust direction (called by gimbal actuator)."""
@@ -207,6 +222,7 @@ class GimbalActuator:
         # Actual angles (evolve in step)
         self.outer_angle: float = 0.0
         self.inner_angle: float = 0.0
+        self._dt: float = 0.02  # last step dt, updated in step()
 
     def apply(self, command: GimbalCommand) -> None:
         """
@@ -229,6 +245,22 @@ class GimbalActuator:
             )
         )
 
+    @property
+    def outer_saturation(self) -> float:
+        """Normalized outer gimbal command-vs-actual error. 0 = honored, ±1 = fully clamped."""
+        max_delta = self.max_rate * self._dt
+        if max_delta < 1e-6:
+            return 0.0
+        return (self._commanded_outer - self.outer_angle) / max_delta
+
+    @property
+    def inner_saturation(self) -> float:
+        """Normalized inner gimbal command-vs-actual error. 0 = honored, ±1 = fully clamped."""
+        max_delta = self.max_rate * self._dt
+        if max_delta < 1e-6:
+            return 0.0
+        return (self._commanded_inner - self.inner_angle) / max_delta
+
     def step(self, dt: float) -> None:
         """
         Advance actuator dynamics by dt seconds.
@@ -236,6 +268,7 @@ class GimbalActuator:
         Updates actual angles toward commanded, respecting rate limit and lag.
         Then updates the rocket thrust vector.
         """
+        self._dt = dt
         self.outer_angle = self._advance_angle(
             self.outer_angle, self._commanded_outer, dt
         )
