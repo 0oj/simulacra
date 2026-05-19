@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Simulacra is a rocket flight simulator with a three-layer architecture inspired by Kantian epistemology:
 
-- **Noumena** (`backend/src/simulacra/noumena/`) — God's view: true world state, physics integration, no noise or bias. Contains `Environment`, `Rocket` (`RocketProps` + `RocketState`), `Kernel` (physics engine), and `Scenario` (orchestration with event scheduling via heapq).
-- **Phenomena** (`backend/src/simulacra/phenomena/`) — Interfaces: sensors (`GPS`, `IMU`, `ThrustSensor`, `VelocitySensor`) that add noise/bias to noumenal truth, and actuators (`GimbalActuator`) that translate imperfect commands into forces/torques.
-- **Onboard** (`backend/src/simulacra/onboard/`) — Flight computer: sees only sensor outputs, never reads noumena directly. Issues commands through actuators.
+- **Noumena** (`src/simulacra/noumena/`) — God's view: true world state, physics integration, no noise or bias. Contains `Environment`, `Rocket` (`RocketProps` + `RocketState`), `Kernel` (physics engine), and `Scenario` (orchestration with event scheduling via heapq).
+- **Phenomena** (`src/simulacra/phenomena/`) — Interfaces: sensors (`GPS`, `IMU`, `ThrustSensor`, `VelocitySensor`) that add noise/bias to noumenal truth, and actuators (`GimbalActuator`) that translate imperfect commands into forces/torques.
+- **Onboard** (`src/simulacra/onboard/`) — Flight computer: sees only sensor outputs, never reads noumena directly. Issues commands through actuators.
 
 The onboard controller must never access noumenal state. Phenomena is the only bridge between truth and the controller.
 
@@ -16,14 +16,14 @@ The onboard controller must never access noumenal state. Phenomena is the only b
 
 ### Backend (Python, managed with `uv`)
 
-All commands run from `backend/`:
+All commands run from the repo root:
 
 ```bash
-uv run pytest                          # run all tests
-uv run pytest tests/test_quat.py       # run a single test file
-uv run pytest tests/test_quat.py -k "test_name"  # run a single test
-uv run -m examples.rocket_wasd_3d      # run WASD example (outputs NDJSON to stdout)
-uv run -m examples.plot_wasd_3d output.ndjson  # plot from NDJSON log
+uv run pytest                                          # run all tests
+uv run pytest tests/test_quat.py                       # run a single test file
+uv run pytest tests/test_quat.py -k "test_name"        # run a single test
+uv run scenarios/hopper_short.py > /tmp/out.ndjson     # run a scenario (NDJSON to stdout)
+uv run python examples/plot_telemetry.py /tmp/out.ndjson  # plot from NDJSON log
 ```
 
 ### Frontend (TypeScript/Three.js, managed with npm)
@@ -167,14 +167,14 @@ DR params are logged in `info["dr_params"]` from `reset()` and in `ConstantMessa
 
 ### Experiment Results
 
-Results saved to `backend/runs/`. Each run contains:
+Historical training runs are archived under `research/runs/`. Future runs at the repo root are gitignored. Each run contains:
 - `config.json` — hyperparameters and feature list
 - `results.jsonl` — structured eval results per stage
 - `training_log_stage{N}.jsonl` — per-minute training dynamics
 - `tensorboard/` — training curves
 - `checkpoints/` — periodic model snapshots
 
-Comprehensive study design: `backend/docs/feature_ablation_study.md`
+Comprehensive study design: `research/docs/feature_ablation_study.md`
 
 ## Dependencies
 
