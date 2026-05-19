@@ -19,6 +19,9 @@ dependencies = [
     "websockets>=16.0",
 ]
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatchling.build.targets.wheel]
 packages = ["src/simulacra"]
 
@@ -38,6 +41,9 @@ jax-gpu = [
     "jax[cuda12]>=0.6.0",
     "flax>=0.10.0",
     "optax>=0.2.0",
+]
+neat = [
+    "tensorneat @ git+https://github.com/EMI-Group/tensorneat.git",
 ]
 
 [dependency-groups]
