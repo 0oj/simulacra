@@ -24,7 +24,7 @@ from simulacra.noumena import (
     Scenario,
     get_upright_orientation,
 )
-from simulacra.onboard.controller import IdentityController
+from simulacra.onboard.controller_legacy import IdentityController
 from simulacra.phenomena.sensors import Sensors
 from simulacra.physics import RocketVec3, WorldVec3
 from simulacra.physics.quat import Orientation

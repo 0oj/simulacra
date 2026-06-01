@@ -13,7 +13,7 @@ from ..noumena import Kernel
 from ..schema import ConstantMessage, MetadataMessage, VariableMessage, collect, write_message
 
 if TYPE_CHECKING:
-    from ..onboard.controller import Controller
+    from ..onboard.controller_legacy import Controller
     from ..phenomena.actuators import Actuators
     from ..phenomena.sensors import Sensors
 

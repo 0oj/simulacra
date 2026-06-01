@@ -33,7 +33,7 @@ from ..phenomena.actuators import (
     GimbalCommand,
 )
 from ..phenomena.sensors import Sensors
-from .controller import Controller
+from .controller_legacy import Controller
 from .hopper_controller import Waypoint, HopperConfig
 from .safety_envelope import SafetyEnvelope
 
@@ -80,10 +80,12 @@ class RLHopperController(Controller):
         if (model_path / "params.npz").exists():
             # JAX checkpoint — use lightweight numpy inference
             self._load_jax_model(model_path)
+            self._expected_obs_dim = self._jax_params["Dense_0/kernel"].shape[0]
         else:
             from stable_baselines3 import PPO
             self.model = PPO.load(str(model_path))
             self._jax_params = None
+            self._expected_obs_dim = self.model.observation_space.shape[0]
 
         # Waypoint state (same as HopperController)
         self._wp_idx = 0
@@ -201,7 +203,14 @@ class RLHopperController(Controller):
         is_track = not is_land and not is_liftoff
         mode = np.array([float(is_track), float(is_land), float(is_liftoff)], dtype=np.float32)
 
-        obs = np.concatenate([state, goal_rel, features, mode])
+        # Build obs matching the model's expected dimensionality.
+        # 19-dim: state(13) + goal_rel(3) + features(3)
+        # 22-dim: + mode(3)
+        # 28-dim: + safety(6)
+        if self._expected_obs_dim >= 22:
+            obs = np.concatenate([state, goal_rel, features, mode])
+        else:
+            obs = np.concatenate([state, goal_rel, features])
 
         # ── Safety envelope (if attached) ──
         if self.safety_envelope is not None:

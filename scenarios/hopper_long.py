@@ -36,7 +36,7 @@ from simulacra.noumena import (
     Scenario,
     get_upright_orientation,
 )
-from simulacra.onboard.controller import Controller, IdentityController
+from simulacra.onboard.controller_legacy import Controller, IdentityController
 from simulacra.phenomena.actuators import ThrottleActuator, ThrottleCommand, Actuators
 from simulacra.phenomena.sensors import Sensors
 from simulacra.physics import RocketVec3, WorldVec3

@@ -4,7 +4,7 @@ PID hover controller. Holds altitude using sensor feedback.
 
 from ..phenomena.actuators import ThrottleActuator, ThrottleCommand
 from ..phenomena.sensors import Sensors
-from .controller import Controller
+from .controller_legacy import Controller
 
 
 class PIDHoverController(Controller):

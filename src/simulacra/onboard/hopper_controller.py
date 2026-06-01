@@ -27,7 +27,7 @@ from ..phenomena.actuators import (
     GimbalCommand,
 )
 from ..phenomena.sensors import Sensors
-from .controller import Controller
+from .controller_legacy import Controller
 
 
 # ──────────────────────────────────────────────────────────────

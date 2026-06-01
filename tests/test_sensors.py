@@ -416,7 +416,7 @@ class TestSensorErrorsWithScenario:
     def test_time_dependent_errors(self, kernel):
         """Time-dependent errors (like drift) receive correct time."""
         from simulacra.noumena.scenario import Scenario
-        from simulacra.onboard.controller import IdentityController
+        from simulacra.onboard.controller_legacy import IdentityController
 
         # Create sensors with drift error on GPS x-channel
         sensors = Sensors(
