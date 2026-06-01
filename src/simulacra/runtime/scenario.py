@@ -155,6 +155,9 @@ class Scenario:
                         desired_inner_angle=last_cmd.gimbal_yaw,
                     ),
                 )
+            # Advance actuator dynamics so commands become real thrust.
+            self.actuators.set_time(t)
+            self.actuators.step(self.dt)
             # Step physics by dt.
             kernel.step(self.dt)
             t += self.dt
