@@ -25,6 +25,10 @@ allow-direct-references = true
 [tool.hatchling.build.targets.wheel]
 packages = ["src/simulacra"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
 [project.optional-dependencies]
 rl = [
     "gymnasium>=1.0.0",

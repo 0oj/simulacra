@@ -7,3 +7,9 @@ temp/
 backend/
 __pycache__/
 .venv/
+
+# C SDK built artefacts
+csdk/examples/*.dylib
+csdk/examples/*.so
+csdk/examples/*.dll
+csdk/examples/*.o
